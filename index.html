@@ -489,6 +489,9 @@ mark.hl { background: linear-gradient(transparent 55%, var(--marker-soft) 55%); 
 .log-body { padding: 0 12px 12px; display: grid; gap: 8px; font-size: 13.5px; }
 .log-body .en { font-size: 15px; white-space: pre-wrap; }
 .empty { border: 1px dashed var(--line); border-radius: 10px; padding: 16px; font-size: 13.5px; color: var(--ink-2); }
+.syncbox { border: 1px solid var(--blue); border-radius: 10px; background: var(--surface); padding: 16px; display: grid; gap: 10px; }
+.syncbox h3 { font-size: 16px; }
+.syncbox textarea { font-family: var(--f-mono); font-size: 12px; min-height: 90px; }
 
 /* guide */
 .toc { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1005,6 +1008,7 @@ table.t.narrow { min-width: 380px; }
     <p class="meta">スコアと目標 · 練習の履歴 · ミスノート</p>
   </div>
   <p class="note" id="log-status"></p>
+  <div id="log-sync" hidden></div>
   <div class="block">
     <h2 class="h2">スコアと目標</h2>
     <form id="profile-form" class="profile">
@@ -2052,8 +2056,8 @@ async function initCaps() {
   const user = await useCap("user");
   if (user) { try { cap.uid = await user.id(); } catch (e) { cap.uid = null; } }
   cap.db = await useCap("db");
-  if (!cap.db) { cap.mode = "local"; LOG.local = LOG.local.concat(arr(store.get("log", []))); logChanged(); renderLogStatus(); return; }
-  cap.mode = "db"; renderLogStatus();
+  if (!cap.db) { cap.mode = "local"; LOG.local = LOG.local.concat(arr(store.get("log", []))); logChanged(); renderLogStatus(); renderSync(); return; }
+  cap.mode = "db"; renderLogStatus(); renderSync();
   subscribeAttempts();
   loadProfile();
 }
@@ -3487,7 +3491,7 @@ const KIND_LABEL = { repeat: "Listen & Repeat", interview: "Interview", build: "
 function renderLogStatus() {
   const el = document.getElementById("log-status"); if (!el) return;
   el.textContent = cap.mode === "db" ? "答案とスコアはこのページに保存され、どの端末から開いても同じ記録が表示されます。Claudeもこの記録を読めます。"
-    : cap.mode === "local" ? "このページでは、記録をこの端末のブラウザに保存します（ほかの端末やClaudeからは見えません）。"
+    : cap.mode === "local" ? "このページでは、記録をこの端末のブラウザに保存します（ほかの端末やClaudeからは見えません）。下の「claude.ai版へ記録を移す」で、claude.ai版にまとめられます。"
     : cap.mode === "error" ? "記録の読み込みに失敗しました。ページを開き直してください。"
     : "記録の保存先に接続しています…";
 }
@@ -3604,7 +3608,122 @@ function renderMistakes() {
   box.append(h("ol", { class: "corr" }, list.slice(0, 40).map((x, i) => h("li", null, h("span", { class: "n" }, String(i + 1)),
     h("div", null, h("del", null, str(x.c.original)), " → ", h("ins", null, str(x.c.fix)), h("span", { class: "why" }, str(x.c.why_ja) + "（" + (KIND_LABEL[x.a.kind] || "") + " · " + whenText(x.a.ts) + "）"))))));
 }
-function renderLog() { renderLogStatus(); renderTiles(); renderList(); renderMistakes(); renderRulers(); }
+function renderLog() { renderLogStatus(); renderSync(); renderTiles(); renderList(); renderMistakes(); renderRulers(); }
+
+/* ================= sync: GitHub Pages copy -> claude.ai copy ================= */
+/* the GitHub copy exports its browser-only log as text or a file; the claude.ai copy writes it into the shared store.
+   imported docs get the id "gh-" + the original local id, so importing the same export twice never duplicates. */
+const SYNC_TAG = "[TOEFL-SYNC v1]";
+const SYNC_KINDS = Object.keys(KIND_LABEL);
+const PROFILE_KEYS = ["curS", "curW", "tgtS", "tgtW", "testDate", "oldS", "oldW", "updatedAt"];
+let syncShown = "";
+function syncExportText() {
+  const attempts = LOG.local.map(a => { const o = Object.assign({}, a); delete o.local; delete o.uid; return o; });
+  return SYNC_TAG + "\n" + JSON.stringify({ v: 1, exportedAt: new Date().toISOString(), profile: PROFILE || {}, attempts });
+}
+function syncParse(raw) {
+  raw = str(raw); const i = raw.indexOf("{");
+  if (raw.indexOf(SYNC_TAG) < 0 || i < 0) return null;
+  try { const d = JSON.parse(raw.slice(i, raw.lastIndexOf("}") + 1)); return d && Array.isArray(d.attempts) ? d : null; } catch (e) { return null; }
+}
+function syncStamp() { const d = new Date(); return d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0"); }
+function syncExportBox() {
+  const n = LOG.local.length;
+  const msg = h("span", { class: "save-msg" });
+  const copyBtn = h("button", { type: "button", class: "btn primary", onclick: () => {
+    const t = syncExportText();
+    const fallback = () => {
+      const ta = h("textarea", { readonly: "", "aria-label": "書き出した記録" }); ta.value = t;
+      box.append(h("p", { class: "sub" }, "自動でコピーできませんでした。下の文を全選択してコピーしてください。"), ta);
+      ta.focus(); ta.select();
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(() => { msg.textContent = "コピーしました。claude.ai版の「記録」タブに貼り付けてください"; }, fallback);
+      else fallback();
+    } catch (e) { fallback(); }
+  } }, "記録をコピー");
+  const fileBtn = h("button", { type: "button", class: "btn", onclick: () => {
+    try {
+      const url = URL.createObjectURL(new Blob([syncExportText()], { type: "application/json" }));
+      const a = h("a", { href: url, download: "toefl-sw-log-" + syncStamp() + ".json" });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      msg.textContent = "ファイルを保存しました";
+    } catch (e) { msg.textContent = "ファイルを保存できませんでした。「記録をコピー」を使ってください"; }
+  } }, "ファイルに保存");
+  const box = h("div", { class: "syncbox" },
+    h("h3", null, "claude.ai版へ記録を移す"),
+    h("p", { class: "sub" }, "この端末に保存された記録 " + n + "件と、スコア・目標・受験日を書き出します。claude.ai版の「記録」タブにある「GitHub版の記録を取り込む」に貼り付けると、Claudeも読める記録にまとまります。何度取り込んでも、同じ記録が二重になることはありません。"),
+    h("p", { class: "sub" }, "スマホからパソコンなど、別の端末で取り込むときは「ファイルに保存」を使い、claude.ai版でそのファイルを選んでください。"),
+    h("div", { class: "actions" }, copyBtn, fileBtn, msg));
+  return box;
+}
+function syncImportBox() {
+  const ta = h("textarea", { rows: 4, spellcheck: "false", "aria-label": "GitHub版から書き出した記録", placeholder: SYNC_TAG + " {...}" });
+  const msg = h("p", { class: "sub", "aria-live": "polite" });
+  const btn = h("button", { type: "button", class: "btn primary", onclick: () => syncImport(ta.value, msg, btn).then(ok => { if (ok) ta.value = ""; }) }, "取り込む");
+  const input = h("input", { type: "file", accept: ".json,application/json,text/plain" });
+  input.addEventListener("change", () => {
+    const f = input.files && input.files[0]; input.value = "";
+    if (!f) return;
+    f.text().then(t => syncImport(t, msg, btn), () => { msg.textContent = "ファイルを読み込めませんでした。"; });
+  });
+  return h("details", { class: "model" },
+    h("summary", null, "GitHub版の記録を取り込む"),
+    h("div", { class: "model-body" },
+      h("p", { class: "sub" }, "GitHub版の「記録」タブで「記録をコピー」を押して、ここに貼り付けてください。「ファイルに保存」で保存したファイルを選んでも取り込めます。取り込み済みの記録は飛ばすので、何度取り込んでも二重にはなりません。"),
+      ta,
+      h("div", { class: "actions" }, btn, h("label", { class: "btn file-btn" }, "ファイルを選ぶ", input)),
+      msg));
+}
+async function syncImport(raw, msg, btn) {
+  const d = syncParse(raw);
+  if (!d) { msg.textContent = "形式が違います。GitHub版の「記録をコピー」でコピーした文を、最初から最後までそのまま貼り付けてください。"; return false; }
+  if (!cap.db) { msg.textContent = "この表示では取り込めません。claude.ai かClaudeアプリでこのページを開いてください。"; return false; }
+  const list = d.attempts.filter(a => a && SYNC_KINDS.indexOf(a.kind) >= 0 && typeof a.ts === "number");
+  const have = new Set(LOG.remote.map(a => a.id));
+  let added = 0, skipped = 0;
+  btn.disabled = true;
+  try {
+    for (let k = 0; k < list.length; k++) {
+      const a = list[k];
+      const id = "gh-" + (str(a.id).replace(/[^A-Za-z0-9_-]/g, "") || String(a.ts));
+      if (have.has(id)) { skipped++; continue; }
+      msg.textContent = "取り込んでいます… " + (k + 1) + " / " + list.length;
+      const body = clean(Object.assign({}, a, { uid: who(), from: "github" }));
+      delete body.id; delete body.local;
+      await cap.db.collection("attempts").doc(id).set(body);
+      have.add(id); added++;
+    }
+  } catch (e) {
+    msg.textContent = "途中で失敗しました（" + added + "件は取り込み済み）。もう一度取り込むと、残りだけが追加されます。";
+    btn.disabled = false;
+    return false;
+  }
+  let pf = "";
+  const p = d.profile && typeof d.profile === "object" ? d.profile : null;
+  if (p) {
+    const inc = {}; PROFILE_KEYS.forEach(k => { if (p[k] != null && p[k] !== "") inc[k] = p[k]; });
+    const mine = PROFILE || {};
+    const empty = ["curS", "curW", "tgtS", "tgtW", "testDate"].every(k => mine[k] == null || mine[k] === "");
+    if (Object.keys(inc).length > (inc.updatedAt ? 1 : 0) && (empty || str(inc.updatedAt) > str(mine.updatedAt))) {
+      await saveProfile(clean(Object.assign({}, mine, inc)));
+      fillProfileForm(); renderRulers(); renderHomeDays(); renderPlanNow();
+      pf = "スコア・目標も更新しました。";
+    }
+  }
+  btn.disabled = false;
+  msg.textContent = (added ? added + "件を取り込みました。" : "新しい記録はありませんでした。") + (skipped ? "（取り込み済みの " + skipped + "件は飛ばしました）" : "") + pf;
+  return true;
+}
+function renderSync() {
+  const el = document.getElementById("log-sync"); if (!el) return;
+  const mode = cap.mode === "local" ? "export" : cap.db ? "import" : "";
+  if (mode === syncShown && !(mode === "export" && el.dataset.n !== String(LOG.local.length))) return;
+  syncShown = mode; el.textContent = ""; el.hidden = !mode;
+  if (mode === "export") { el.dataset.n = String(LOG.local.length); el.append(syncExportBox()); }
+  if (mode === "import") el.append(syncImportBox());
+}
 
 /* ================= boot ================= */
 function init() {
