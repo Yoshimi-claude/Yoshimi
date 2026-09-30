@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime
 import json
 import os
@@ -184,6 +185,30 @@ def looks_like_pdf(body: bytes) -> bool:
     return b"%PDF-" in body[:1024]
 
 
+def redact_url(text: str) -> str:
+    """URL の中のセッションに関わる値（acs_ など）を *** に置き換える"""
+    return re.sub(r"((?:acs_|sid|session|token|PHPSESSID)[^=&\s]*=)[^&\s|]*", r"\1***", text, flags=re.I)
+
+
+class FetchedFile:
+    """ブラウザの fetch で取ってきたファイル"""
+
+    def __init__(self, url: str, ctype: str, disposition: str, body: bytes):
+        self.url = url
+        self.headers = {"content-type": ctype, "content-disposition": disposition}
+        self._body = body
+
+    def body(self) -> bytes:
+        return self._body
+
+    def text(self) -> str:
+        m = re.search(r"charset=([\w-]+)", self.headers["content-type"], re.I)
+        try:
+            return self._body.decode(m.group(1) if m else "utf-8", errors="replace")
+        except LookupError:
+            return self._body.decode("utf-8", errors="replace")
+
+
 class LinkCollector(HTMLParser):
     """HTML から <a href> を集める"""
 
@@ -264,6 +289,7 @@ class WebClassDownloader:
         self.history = history
         self.save_dir = save_dir
         self.allow_dialog = False
+        self.fetch_page = None
         self.saved_files: list[Path] = []
         self.skipped_files: list[str] = []
         self.failed: list[str] = []
@@ -277,15 +303,24 @@ class WebClassDownloader:
         page.on("dialog", self._on_dialog)
 
     def _on_dialog(self, dialog) -> None:
-        # 「開始」ボタンを押した直後の確認だけ OK する。それ以外は全部キャンセルする
-        if self.allow_dialog:
+        # 「開始」ボタンを押した直後の確認と、「このページを離れますか？」だけ OK する。
+        # それ以外は全部キャンセルする
+        if self.allow_dialog or dialog.type == "beforeunload":
             dialog.accept()
         else:
             dialog.dismiss()
 
     def goto(self, page, url: str) -> None:
         self.pacer.wait()
-        page.goto(url, wait_until="load", timeout=60000)
+        try:
+            page.goto(url, wait_until="load", timeout=60000)
+        except PlaywrightError as e:
+            # 前の画面の処理と重なって移動が中断されることがあるので、少し待って 1 回だけやり直す
+            if "ERR_ABORTED" not in str(e) and "interrupted" not in str(e):
+                raise
+            time.sleep(3)
+            self.pacer.wait()
+            page.goto(url, wait_until="load", timeout=60000)
         self.check_session(page)
 
     def check_session(self, page) -> None:
@@ -311,6 +346,37 @@ class WebClassDownloader:
             print(f"    （調査用に画面を保存しました: {DEBUG_DIR}）")
         except PlaywrightError:
             pass
+
+    def write_report(self, page, label: str) -> None:
+        """画面の作り（リンク・埋め込み・ボタンなど）の要点を report.txt に書き出す。
+        氏名などが入りにくいよう、URL の中の acs_ などは *** に置き換える"""
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        lines = [f"===== {label} ====="]
+        for i, frame in enumerate(page.frames):
+            try:
+                info = frame.evaluate(
+                    """() => {
+                        const t = s => (s || '').replace(/\\s+/g, ' ').trim().slice(0, 40);
+                        const out = [];
+                        document.querySelectorAll('a').forEach(a => out.push(
+                            'a  href=' + (a.getAttribute('href') || '') + ' | onclick=' + t(a.getAttribute('onclick')) + ' | ' + t(a.innerText)));
+                        document.querySelectorAll('iframe,frame,embed,object').forEach(e => out.push(
+                            e.tagName.toLowerCase() + '  src=' + (e.getAttribute('src') || e.getAttribute('data') || '')));
+                        document.querySelectorAll('button,input[type=button],input[type=submit]').forEach(b => out.push(
+                            'button  ' + t(b.innerText || b.value) + ' | onclick=' + t(b.getAttribute('onclick'))));
+                        document.querySelectorAll('[onclick]').forEach(e => {
+                            if (!['A', 'BUTTON', 'INPUT'].includes(e.tagName)) out.push(
+                                e.tagName.toLowerCase() + '.' + t(e.className) + '  onclick=' + t(e.getAttribute('onclick')) + ' | ' + t(e.innerText));
+                        });
+                        return {title: document.title, items: out.slice(0, 150)};
+                    }"""
+                )
+            except PlaywrightError:
+                continue
+            lines.append(f"--- frame{i}: {redact_url(frame.url)} ({info['title']})")
+            lines.extend(redact_url(x) for x in info["items"])
+        with open(DEBUG_DIR / "report.txt", "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n\n")
 
     # --- ログイン ---
 
@@ -517,13 +583,34 @@ class WebClassDownloader:
 
     # --- ダウンロード ---
 
-    def fetch(self, url: str, referer: str | None = None):
+    def fetch(self, url: str, referer: str | None = None) -> "FetchedFile":
+        """ブラウザの中から fetch で取得する（ログイン状態のまま・ブラウザと同じ通信方式で）"""
         self.pacer.wait()
-        headers = {"Referer": referer} if referer else None
-        resp = self.context.request.get(url, headers=headers, timeout=120000)
-        if not resp.ok:
-            raise RuntimeError(f"ダウンロードに失敗しました（HTTP {resp.status}）: {url}")
-        return resp
+        page = self.fetch_page
+        if page is None or page.is_closed() or urlparse(page.url).netloc != WEBCLASS_HOST:
+            page = self.page
+        r = page.evaluate(
+            """async ([url, referrer]) => {
+                const opts = {credentials: 'include'};
+                if (referrer) opts.referrer = referrer;
+                const res = await fetch(url, opts);
+                const buf = new Uint8Array(await res.arrayBuffer());
+                let s = '';
+                for (let i = 0; i < buf.length; i += 0x8000) {
+                    s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+                }
+                return {
+                    ok: res.ok, status: res.status, url: res.url,
+                    ctype: res.headers.get('content-type') || '',
+                    disp: res.headers.get('content-disposition') || '',
+                    body: btoa(s),
+                };
+            }""",
+            [url, referer],
+        )
+        if not r["ok"]:
+            raise RuntimeError(f"ダウンロードに失敗しました（HTTP {r['status']}）: {redact_url(url)}")
+        return FetchedFile(r["url"], r["ctype"], r["disp"], base64.b64decode(r["body"]))
 
     def save_file(self, material: Material, filename: str, body: bytes) -> Path | None:
         """保存する。同じ名前で中身が同じファイルがあれば保存しない"""
@@ -565,7 +652,7 @@ class WebClassDownloader:
         """(A) 添付ファイル型：file_down.php のページの中にある download.php が本体"""
         saved = []
         resp = self.fetch(file_down_url)
-        ctype = (resp.headers.get("content-type") or "").lower()
+        ctype = resp.headers.get("content-type").lower()
         if "text/html" not in ctype:
             name = parse_content_disposition(resp.headers.get("content-disposition")) or material.name
             p = self.handle_body(material, name, resp)
@@ -605,6 +692,7 @@ class WebClassDownloader:
 
     def download_material(self, material: Material) -> bool:
         viewer = self.open_material(material)
+        self.fetch_page = viewer
         try:
             first_url = viewer.url
             visited = {first_url.split("#")[0]}
@@ -651,6 +739,7 @@ class WebClassDownloader:
             if not found_anything:
                 print("    ! この資料の中にファイルが見つかりませんでした（次回もう一度確認します）")
                 self.dump_debug(viewer, f"{material.contents_id}_notfound")
+                self.write_report(viewer, f"ファイルなし: {material.course.folder_name} / {material.name}")
                 return False
             self.history.mark_done(material, [str(p) for p in saved])
             return True
@@ -722,6 +811,9 @@ def main() -> int:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(APP_DIR, 0o700)
     history = History(HISTORY_FILE)
+    report = DEBUG_DIR / "report.txt"
+    if report.exists():
+        report.unlink()
     pacer = Pacer(args.interval)
 
     with sync_playwright() as pw:
@@ -804,6 +896,7 @@ def main() -> int:
                     dl.failed.append(f"{m.course.folder_name} / {m.name}")
                     try:
                         dl.dump_debug(dl.page, f"{m.contents_id}_error")
+                        dl.write_report(dl.page, f"エラー: {m.course.folder_name} / {m.name}: {msg}")
                     except PlaywrightError:
                         pass
 
@@ -836,6 +929,12 @@ def main() -> int:
         for s in dl.failed:
             print(f"  ・{s}")
     print(f"保存先: {save_dir}")
+    if report.exists():
+        print()
+        print("うまくいかなかった資料の画面の作りを、次のファイルにまとめました。")
+        print(f"  {report}")
+        print("直すための手がかりになるので、次のコマンドで開いて中身を見せてください:")
+        print(f"  open {report}")
     print("=" * 60)
     return 0
 
