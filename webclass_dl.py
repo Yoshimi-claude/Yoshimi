@@ -456,7 +456,8 @@ class WebClassDownloader:
         courses: dict[str, Course] = {}
         for link in links:
             m = re.search(r"/course\.php/([^/?#]+)/login", link["href"])
-            name = normalize_space(link["text"])
+            # 科目名の前に付いている「»」などの記号を取る
+            name = re.sub(r"^[»›>▶▸・\s]+", "", normalize_space(link["text"]))
             if not m or not name or m.group(1) in courses:
                 continue
             course_id = m.group(1)
