@@ -493,6 +493,27 @@ mark.hl { background: linear-gradient(transparent 55%, var(--marker-soft) 55%); 
 .syncbox h3 { font-size: 16px; }
 .syncbox textarea { font-family: var(--f-mono); font-size: 12px; min-height: 90px; }
 
+/* typing */
+.ty-stage { display: grid; gap: 12px; }
+.ty-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.ty-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 600 12px/1.4 var(--f-mono); color: var(--ink-3); letter-spacing: .04em; }
+.ty-stats b { font-size: 19px; color: var(--ink); font-variant-numeric: tabular-nums; margin-left: 6px; letter-spacing: 0; }
+.ty-target { position: relative; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 16px 18px; font-family: var(--f-mono); font-size: 18px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 340px; overflow-y: auto; box-shadow: var(--shadow); cursor: text; }
+.ty-target .c { color: var(--ink-3); border-radius: 2px; }
+.ty-target .c.ok { color: var(--ink); }
+.ty-target .c.ng { color: var(--red); background: var(--red-soft); }
+.ty-target .c.cur { color: var(--ink); background: var(--blue-soft); box-shadow: inset 0 -2px 0 var(--blue); }
+.ty-target .c.nl { font-size: 14px; }
+.ty-next { font-family: var(--f-mono); font-size: 13.5px; color: var(--ink-3); overflow-wrap: anywhere; }
+textarea.ty-input { font-family: var(--f-mono); font-size: 17px; line-height: 1.6; min-height: 70px; }
+textarea.ty-input.long { min-height: 190px; }
+.ty-hist { list-style: none; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.ty-hist li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 13.5px; align-items: baseline; }
+.ty-hist li:first-child { border-top: 0; }
+.keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.key { font: 600 13px/1 var(--f-mono); padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); box-shadow: 0 1px 0 var(--line); }
+.key small { color: var(--red); margin-left: 5px; font-size: 12px; }
+
 /* guide */
 .toc { display: flex; flex-wrap: wrap; gap: 6px; }
 .gsec { display: grid; gap: 12px; padding-top: 22px; border-top: 1px solid var(--line); }
@@ -526,8 +547,8 @@ table.t.narrow { min-width: 380px; }
 .ph ul { list-style: none; padding: 0; display: grid; gap: 3px; font-family: var(--f-en); font-size: 15px; line-height: 1.45; }
 .steps { display: grid; gap: 6px; }
 
-.view, .review, .gsec, .confirm, .bs-wrap { scroll-margin-top: 16px; }
-@media (min-width: 760px) { .view, .review, .gsec, .confirm, .bs-wrap { scroll-margin-top: 140px; } }
+.view, .review, .gsec, .confirm, .bs-wrap, .ty-stage { scroll-margin-top: 16px; }
+@media (min-width: 760px) { .view, .review, .gsec, .confirm, .bs-wrap, .ty-stage { scroll-margin-top: 140px; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -549,6 +570,7 @@ table.t.narrow { min-width: 380px; }
       <button type="button" class="tab" data-view="build">Build a Sentence</button>
       <button type="button" class="tab" data-view="email">Email</button>
       <button type="button" class="tab" data-view="discussion">Discussion</button>
+      <button type="button" class="tab" data-view="typing">Typing</button>
       <span class="tab-sep">Notes</span>
       <button type="button" class="tab" data-view="guide">攻略ガイド</button>
       <button type="button" class="tab" data-view="log">記録</button>
@@ -590,6 +612,7 @@ table.t.narrow { min-width: 380px; }
         <li><span class="mhead"><button type="button" data-go="interview">Interview 2問</button></span><span class="mdesc">このページで録音しながら答え、自動採点を見て模範解答と聞き比べる（約7分）</span></li>
         <li><span class="mhead"><button type="button" data-go="build">Build a Sentence 10問</button></span><span class="mdesc">7分を計って解き、間違えた文法ポイントを読む（約7分）</span></li>
         <li><span class="mhead"><button type="button" data-go="email">Email</button> か <button type="button" data-go="discussion">Discussion</button> を1本</span><span class="mdesc">時間内に書いて提出し、AI添削の赤ペンを確認（約10分）</span></li>
+        <li><span class="mhead"><button type="button" data-go="typing">タイピング 1回</button></span><span class="mdesc">決まり文句か模範解答を写し打ちして、WPMと正確さを記録（約5分）</span></li>
       </ol>
     </div>
     <div class="block">
@@ -829,6 +852,35 @@ table.t.narrow { min-width: 380px; }
   <div class="controls"><div class="field wide"><span class="label">問題</span><div class="chips" id="discussion-sets"></div></div></div>
   <div id="discussion-writer"></div>
   <div class="review" id="discussion-review" hidden></div>
+</section>
+
+<!-- ================= TYPING ================= -->
+<section id="v-typing" class="view" hidden>
+  <div class="vhead">
+    <p class="eyebrow">Writing · 基礎練習</p>
+    <h2 class="vtitle">Typing</h2>
+    <p class="meta">英文を速く正確に打つ練習 · WPM（1分あたりの語数）と正確さを記録 · 目標 35〜40 WPM・正確さ95%以上</p>
+  </div>
+  <div class="memo">
+    <p class="memo-label">作戦メモ</p>
+    <ul>
+      <li><b>パソコンのキーボードで、日本語入力をオフにして打つ。</b>半角英数で打ちます。本番と同じく、スペルチェックと自動修正はオフです。</li>
+      <li><b>キーボードを見ない。</b>人差し指を F と J に置くホームポジションから。最初は遅くなっても、2〜3週間で見て打つより速くなります。</li>
+      <li><b>速さより正確さ。</b>打ち直しがいちばんの時間のロスです。正確さが95%を切ったら、少しゆっくり打ちます。</li>
+      <li><b>決まり文句は、考えずに指が動くまで。</b>型の部分を速く打てれば、そのぶん中身を考える時間になります。</li>
+      <li><b>目安：</b>130語のメールを打つだけで、30 WPMなら約5分、40 WPMなら約4分かかります。</li>
+    </ul>
+  </div>
+  <div class="controls">
+    <div class="field wide"><span class="label">題材</span><div class="chips" id="ty-sets"></div></div>
+  </div>
+  <div id="ty-source"></div>
+  <div class="ty-stage" id="ty-stage"></div>
+  <div class="review" id="ty-result" hidden></div>
+  <div class="block">
+    <h2 class="h2">タイピングの記録</h2>
+    <div id="ty-hist"></div>
+  </div>
 </section>
 
 <!-- ================= GUIDE ================= -->
@@ -2101,16 +2153,17 @@ async function saveProfile(p) {
   return true;
 }
 const allAttempts = () => LOG.local.concat(LOG.remote).sort((a, b) => (b.ts || 0) - (a.ts || 0));
-function logChanged() { if (currentView === "log") renderLog(); if (currentView === "repeat") rpApplyAI(); }
+function logChanged() { if (currentView === "log") renderLog(); if (currentView === "repeat") rpApplyAI(); if (currentView === "typing") tyLogChanged(); }
 
 /* ================= router ================= */
-const VIEWS = ["home", "repeat", "interview", "build", "email", "discussion", "guide", "log"];
+const VIEWS = ["home", "repeat", "interview", "build", "email", "discussion", "typing", "guide", "log"];
 let currentView = "";
 function show(v, opts) {
   if (VIEWS.indexOf(v) < 0) v = "home";
   if (currentView && v !== currentView) {
     if (currentView === "repeat" && RP.running) rpAbort();
     if (currentView === "interview" && IV.running) ivAbort();
+    if (currentView === "typing" && TY.started && !TY.done) tyLoad(TY.segs, TY.title, TY.itemId);
   }
   currentView = v;
   VIEWS.forEach(x => { const s = document.getElementById("v-" + x); if (s) s.hidden = x !== v; });
@@ -2120,6 +2173,7 @@ function show(v, opts) {
   if (v === "log") renderLog();
   if (v === "home") { renderRulers(); renderHomeDays(); }
   if (v === "guide") renderPlanNow();
+  if (v === "typing") renderTyHist();
 }
 
 /* ================= shared review pieces ================= */
@@ -2250,7 +2304,8 @@ function renderWritingAI(kind, data, text, out) {
   if (arr(data.next_ja).length) card.append(listSec("次に意識すること", data.next_ja));
   if (data.rewrite) {
     const rw = str(data.rewrite);
-    card.append(h("div", { class: "rewrite" }, h("h4", null, "書き直し例（あなたのアイデアを5点レベルに）"), h("p", { class: "en pre" }, rw), h("p", { class: "wc" }, words(rw) + "語")));
+    card.append(h("div", { class: "rewrite" }, h("h4", null, "書き直し例（あなたのアイデアを5点レベルに）"), h("p", { class: "en pre" }, rw), h("p", { class: "wc" }, words(rw) + "語"),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn small ghost", onclick: () => tyFromText("書き直し例（" + (kind === "email" ? "Email" : "Discussion") + "）", rw) }, "この書き直し例で写し打ち練習"))));
   }
   card.append(h("p", { class: "fineprint" }, "AIの採点は目安です。本番のスコアを保証するものではありません。"));
   out.append(card);
@@ -3371,7 +3426,8 @@ function wrReview(kind) {
       copyButton("添削依頼文をコピー", () => writingPromptText(kind, p, text, W.secs))),
     out));
   box.append(h("details", { class: "model" }, h("summary", null, "模範解答（黄色の表現はそのまま使い回せます）"),
-    h("div", { class: "model-body" }, h("p", { class: "en pre" }, markNodes(p.model)), h("p", { class: "wc" }, words(unmark(p.model)) + "語"))));
+    h("div", { class: "model-body" }, h("p", { class: "en pre" }, markNodes(p.model)), h("p", { class: "wc" }, words(unmark(p.model)) + "語"),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn small ghost", onclick: () => tyOpenModel(kind, W.idx) }, "この模範解答で写し打ち練習")))));
   box.append(rubricBox(kind));
   box.append(h("div", { class: "actions" },
     h("button", { type: "button", class: "btn", onclick: () => { wrLoad(kind, W.idx); document.getElementById("v-" + kind).scrollIntoView({ behavior: smooth(), block: "start" }); } }, "同じ問題をもう一度書く"),
@@ -3384,6 +3440,332 @@ async function wrAI(kind, out, btn) {
   renderWritingAI(kind, data, text, out);
   const hd = W.savePromise ? await W.savePromise : null;
   if (hd) patchAttempt(hd, { ai: data, aiScore: normScore(data.score) });
+}
+
+/* ================= Typing ================= */
+const TY_SETS = [
+  { id: "ph-email", ja: "決まり文句：Email", drill: true, note: "メールでそのまま使える決まり文句です。", items: [
+    "Dear Professor Lee,",
+    "Dear Ms. Garcia,",
+    "I am writing to let you know about a problem with the heater in my room.",
+    "I'm writing to ask about the assignment for next week.",
+    "My name is Ken Tanaka, and I am a student in your biology course.",
+    "Unfortunately, I also missed the short quiz at the beginning of class.",
+    "Would it be possible for me to make up the quiz?",
+    "Could you please let me know when it will be repaired?",
+    "I was wondering if you could send me the slides from the lecture.",
+    "In the meantime, is there anything I could use, such as a space heater?",
+    "I reported this at the front desk two days ago, but no one has come yet.",
+    "I would really appreciate it if you could help me with this.",
+    "If you need any more information, please let me know.",
+    "I'm sorry for any inconvenience this may cause.",
+    "I would be happy to come to your office hours this week.",
+    "Thank you for your time and understanding.",
+    "I look forward to hearing from you.",
+    "Best regards,",
+    "Sincerely,"
+  ] },
+  { id: "ph-disc", ja: "決まり文句：Discussion", drill: true, note: "Academic Discussion の型で使う文です。", items: [
+    "I agree with Emma that all students should take this course, but I would like to add a different reason.",
+    "While I understand Leo's point, I believe the benefits are greater than the costs.",
+    "The main reason is that most students have more free time than full-time workers.",
+    "For example, when I started my part-time job last year, I had no idea how taxes worked.",
+    "Leo points out that there are free resources online, but most students never use them.",
+    "Neither Emma nor Leo mentioned how this affects students' mental health.",
+    "It is true that the program is expensive. However, it would save money in the long run.",
+    "Admittedly, some students may not need this class.",
+    "In addition, a required course would make sure that everyone learns the basics.",
+    "As a result, many students fall into debt soon after they graduate.",
+    "On the other hand, people who live in rural areas depend on their cars.",
+    "For this reason, I believe universities should require a personal finance course.",
+    "This is why I think a short, practical course is the best solution."
+  ] },
+  { id: "ph-mark", ja: "記号と大文字", drill: true, note: "大文字・アポストロフィ・?・数字など、英語特有の記号の練習です。", items: [
+    "I'm sure it's open, but I don't know if they're still serving lunch.",
+    "Could you tell me what time the library closes? I'd like to know.",
+    "Dr. Carter, Ms. Garcia, and Professor Lee weren't at the meeting.",
+    "On Monday, March 10, I returned the book to Room 314 in Maple Hall.",
+    "It's 7:30 a.m., so let's meet at the library's front desk at 8:00.",
+    "There are three things to consider: rent, food, and transportation.",
+    "Would you mind if I asked one more question? Thanks!",
+    "We haven't decided yet; let's talk about it on Friday.",
+    "The late fee is $15, and it's due by May 20.",
+    "My friend said, \"You can't miss it.\"",
+    "I think it's the best option (at least for now).",
+    "Isn't it strange that nobody's replied to Chris's message?"
+  ] },
+  { id: "ph-spell", ja: "よく出るつづり", drill: true, note: "英語によく出るつづりの指ならしです。", items: [
+    "the that this there these those then than",
+    "would could should thought though through",
+    "going doing thinking studying working living",
+    "information education transportation situation",
+    "because believe between before become better",
+    "which while where when what why who",
+    "important interesting different difficult",
+    "their there they're your you're its it's",
+    "people problem probably professor process",
+    "experience environment government development",
+    "necessary opportunity especially actually",
+    "students should study successful schedule"
+  ] },
+  { id: "md-email", ja: "模範解答：Email", list: () => EMAILS.map(p => ({ id: p.id, title: p.title, text: unmark(p.model) })) },
+  { id: "md-disc", ja: "模範解答：Discussion", list: () => DISCUSSIONS.map(p => ({ id: p.id, title: p.title, text: unmark(p.model) })) },
+  { id: "mine", ja: "AI添削の書き直し例",
+    empty: "まだ書き直し例がありません。Email か Discussion でAI添削を受けると、ここに並びます。チャットでもらった書き直し例は「貼り付けた英文」で練習できます。",
+    list: () => allAttempts().filter(a => (a.kind === "email" || a.kind === "discussion") && a.ai && str(a.ai.rewrite).trim()).slice(0, 20)
+      .map(a => ({ id: a.id, title: whenText(a.ts) + " " + str(a.title), text: str(a.ai.rewrite) })) },
+  { id: "paste", ja: "貼り付けた英文", paste: true }
+];
+const TY_DRILL_N = 8;
+const TY = { set: 0, item: 0, segs: [], seg: 0, input: "", finals: [], started: false, done: false, t0: 0, tEnd: 0, tick: 0, ok: 0, total: 0, err: 0, bs: 0, miss: {}, missW: {}, title: "", itemId: "",
+  paste: str(store.get("ty-paste", "")), pasteTitle: str(store.get("ty-paste-title", "")) };
+/* what can be typed on a plain English keyboard: straight quotes, no accents, one line break between paragraphs */
+function tyNorm(t) {
+  return str(t).normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[“”„]/g, "\"").replace(/[‘’‚]/g, "'").replace(/[–—]/g, "-").replace(/…/g, "...")
+    .replace(/[\t ]/g, " ").replace(/\r\n?/g, "\n").replace(/[^\x20-\x7e\n]/g, "")
+    .split("\n").map(l => l.replace(/ +/g, " ").trim()).join("\n").replace(/\n{2,}/g, "\n").trim();
+}
+function tyInit() {
+  const box = $("#ty-sets");
+  TY_SETS.forEach((S, i) => box.append(h("button", { type: "button", class: "chip", onclick: () => { TY.set = i; TY.item = 0; tyRenderSource(); tyPrepare(); } }, S.ja)));
+  tyRenderSource(); tyPrepare(); renderTyHist();
+}
+const tyItems = () => { const S = TY_SETS[TY.set]; return S.list ? S.list() : []; };
+function tyRenderSource() {
+  const S = TY_SETS[TY.set], box = $("#ty-source"); box.textContent = "";
+  $$("#ty-sets .chip").forEach((c, i) => c.setAttribute("aria-pressed", String(i === TY.set)));
+  if (S.drill) { box.append(h("p", { class: "note" }, S.note + "ランダムに" + TY_DRILL_N + "文出ます。1文を打ち終わると、次の文に進みます。")); return; }
+  if (S.paste) {
+    const ta = h("textarea", { rows: 5, spellcheck: "false", "aria-label": "練習したい英文", placeholder: "Dear Ms. Garcia, ..." });
+    ta.value = TY.paste;
+    box.append(h("div", { class: "block" },
+      h("p", { class: "note" }, "練習したい英文（チャットでもらった書き直し例など）を貼り付けて「この英文で練習する」を押します。日本語や打てない記号は自動で取り除きます。"),
+      ta,
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: () => {
+        TY.paste = ta.value; TY.pasteTitle = "";
+        store.set("ty-paste", TY.paste.slice(0, 4000)); store.set("ty-paste-title", "");
+        tyPrepare(); tyFocus();
+      } }, "この英文で練習する"))));
+    return;
+  }
+  const list = tyItems();
+  if (!list.length) { box.append(h("p", { class: "empty" }, S.empty || "練習できる文章がありません。")); return; }
+  if (TY.item >= list.length) TY.item = 0;
+  const sel = h("select", { "aria-label": "文章を選ぶ", onchange: e => { TY.item = parseInt(e.target.value, 10) || 0; tyPrepare(); } },
+    list.map((it, i) => h("option", { value: String(i) }, it.title)));
+  sel.value = String(TY.item);
+  box.append(h("div", { class: "field" }, h("span", { class: "label" }, "文章"), sel));
+}
+function tyPrepare() {
+  const S = TY_SETS[TY.set];
+  let segs = [], title = S.ja, itemId = S.id;
+  if (S.drill) segs = shuffle(S.items).slice(0, TY_DRILL_N);
+  else if (S.paste) { segs = [TY.paste]; if (TY.pasteTitle) title = TY.pasteTitle; }
+  else {
+    const list = tyItems(), it = list[TY.item] || list[0];
+    if (it) { segs = [it.text]; title = S.ja.replace(/：.*$/, "") + "：" + it.title; itemId = S.id + ":" + it.id; }
+  }
+  tyLoad(segs.map(tyNorm).filter(Boolean), title, itemId);
+}
+function tyLoad(segs, title, itemId) {
+  tyStopTick();
+  Object.assign(TY, { segs, seg: 0, input: "", finals: [], started: false, done: false, t0: 0, tEnd: 0, ok: 0, total: 0, err: 0, bs: 0, miss: {}, missW: {}, title, itemId });
+  const r = $("#ty-result"); r.hidden = true; r.textContent = "";
+  tyRenderStage();
+}
+function tyStopTick() { if (TY.tick) { clearInterval(TY.tick); TY.tick = 0; } }
+function tyFocus() { const ta = $("#ty-input"); if (ta && !ta.readOnly) { try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); } } }
+function tyWarn(msg) { const el = $("#ty-warn"); if (el) { el.textContent = msg; el.hidden = !msg; } }
+function tyRenderStage() {
+  const st = $("#ty-stage"); st.textContent = "";
+  if (!TY.segs.length) {
+    st.append(h("p", { class: "empty" }, TY_SETS[TY.set].paste ? "上の欄に練習したい英文を貼り付けて「この英文で練習する」を押してください。" : "練習できる文章がありません。"));
+    return;
+  }
+  const seg = TY.segs[TY.seg], long = seg.length > 140;
+  const ta = h("textarea", { class: "ty-input" + (long ? " long" : ""), id: "ty-input", rows: long ? 8 : 2, spellcheck: "false", autocomplete: "off", autocorrect: "off", autocapitalize: "off",
+    "aria-label": "ここに入力", placeholder: TY.started ? "" : "ここをクリックして打ち始めると、計測が始まります" });
+  ta.addEventListener("input", () => tyOnInput(ta));
+  ta.addEventListener("paste", e => { e.preventDefault(); tyWarn("ここには貼り付けできません。自分で打ちましょう。"); });
+  ta.addEventListener("drop", e => e.preventDefault());
+  ta.addEventListener("compositionstart", () => tyWarn("日本語入力がオンになっています。半角英数に切り替えてください。"));
+  ta.addEventListener("keydown", e => { if (e.key === "Tab") e.preventDefault(); });
+  const target = h("div", { class: "ty-target", id: "ty-target", onclick: () => ta.focus() });
+  for (let k = 0; k < seg.length; k++) target.append(h("span", { class: "c" + (seg[k] === "\n" ? " nl" : "") }, seg[k] === "\n" ? "↵\n" : seg[k]));
+  const nextSeg = TY.segs[TY.seg + 1];
+  add(st, [
+    h("div", { class: "ty-bar" },
+      h("span", { class: "bs-count" }, TY.segs.length > 1 ? (TY.seg + 1) + " / " + TY.segs.length : words(seg) + "語"),
+      h("div", { class: "ty-stats", id: "ty-stats", "aria-live": "off" })),
+    target,
+    nextSeg ? h("p", { class: "ty-next" }, "次： " + nextSeg) : null,
+    ta,
+    h("p", { class: "over", id: "ty-warn", hidden: true }),
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "btn", onclick: () => { tyLoad(TY.segs, TY.title, TY.itemId); tyFocus(); } }, "最初からやり直す"),
+      h("button", { type: "button", class: "btn ghost", id: "ty-end", disabled: !TY.started, onclick: () => tyFinish(true) }, "ここで終了して記録"),
+      TY_SETS[TY.set].drill && TY.itemId !== "missed" ? h("button", { type: "button", class: "btn ghost", onclick: () => { tyPrepare(); tyFocus(); } }, "別の" + TY_DRILL_N + "文にする") : null)]);
+  tyPaint(); tyStats();
+}
+function tyPaint() {
+  const tg = $("#ty-target"); if (!tg) return;
+  const seg = TY.segs[TY.seg] || "", v = TY.input, kids = tg.children;
+  for (let k = 0; k < kids.length; k++) {
+    let c = "c" + (seg[k] === "\n" ? " nl" : "");
+    if (k < v.length) c += v[k] === seg[k] ? " ok" : " ng";
+    else if (k === v.length) c += " cur";
+    if (kids[k].className !== c) kids[k].className = c;
+  }
+  const cur = kids[Math.min(v.length, kids.length - 1)];
+  if (cur && tg.scrollHeight > tg.clientHeight + 4) {
+    const top = cur.offsetTop;
+    if (top < tg.scrollTop + 8 || top > tg.scrollTop + tg.clientHeight - 64) tg.scrollTop = Math.max(0, top - 64);
+  }
+}
+function tyNet() {
+  let n = 0;
+  TY.finals.forEach((f, i) => { const s = TY.segs[i] || ""; for (let k = 0; k < f.length; k++) if (f[k] === s[k]) n++; });
+  if (!TY.done) { const s = TY.segs[TY.seg] || "", v = TY.input; for (let k = 0; k < v.length; k++) if (v[k] === s[k]) n++; }
+  return n;
+}
+function tyStats() {
+  const el = $("#ty-stats"); if (!el) return;
+  const secs = TY.started ? ((TY.done ? TY.tEnd : performance.now()) - TY.t0) / 1000 : 0;
+  const wpm = secs >= 2 ? Math.round(tyNet() / 5 / (secs / 60)) : null;
+  const acc = TY.total ? Math.round(TY.ok / TY.total * 100) : null;
+  const all = TY.segs.reduce((s, x) => s + x.length, 0);
+  const did = TY.finals.reduce((s, f) => s + (f ? f.length : 0), 0) + (TY.done ? 0 : TY.input.length);
+  el.textContent = "";
+  el.append(h("span", null, "時間", h("b", null, fmt(secs))), h("span", null, "WPM", h("b", null, wpm == null ? "–" : String(wpm))),
+    h("span", null, "正確さ", h("b", null, acc == null ? "–" : acc + "%")), h("span", null, "進み", h("b", null, (all ? Math.min(100, Math.round(did / all * 100)) : 0) + "%")));
+}
+const tyKeyLabel = ch => ch === " " ? "スペース" : ch === "\n" ? "Enter" : /[A-Z]/.test(ch) ? "大文字 " + ch : ch;
+function tyOnInput(ta) {
+  if (TY.done) return;
+  const seg = TY.segs[TY.seg]; if (seg == null) return;
+  let v = ta.value.replace(/\r/g, "");
+  if (v.length > seg.length) { v = v.slice(0, seg.length); ta.value = v; }
+  tyWarn(/[^\x00-\x7f]/.test(v) ? "日本語入力（全角）になっています。半角英数に切り替えてください。" : "");
+  const old = TY.input; let p = 0;
+  while (p < old.length && p < v.length && old[p] === v[p]) p++;
+  if (old.length > p) TY.bs += old.length - p;
+  for (let k = p; k < v.length; k++) {
+    TY.total++;
+    if (v[k] === seg[k]) { TY.ok++; continue; }
+    TY.err++;
+    /* only the first slip in a row counts toward the weak keys, not the letters that shift after it */
+    if (k > 0 && v[k - 1] !== seg[k - 1]) continue;
+    const lab = tyKeyLabel(seg[k]); TY.miss[lab] = (TY.miss[lab] || 0) + 1;
+    if (!/\s/.test(seg[k])) {
+      let a = k, b = k;
+      while (a > 0 && !/\s/.test(seg[a - 1])) a--;
+      while (b < seg.length && !/\s/.test(seg[b])) b++;
+      const w = seg.slice(a, b).replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "");
+      if (w) TY.missW[w] = (TY.missW[w] || 0) + 1;
+    }
+  }
+  TY.input = v;
+  if (!TY.started && v.length) {
+    TY.started = true; TY.t0 = performance.now(); TY.tick = setInterval(tyStats, 250);
+    const b = $("#ty-end"); if (b) b.disabled = false;
+    ta.removeAttribute("placeholder");
+  }
+  tyPaint(); tyStats();
+  if (v.length >= seg.length) tySegDone();
+}
+function tySegDone() {
+  TY.finals[TY.seg] = TY.input; TY.input = "";
+  if (TY.seg + 1 < TY.segs.length) { TY.seg++; tyRenderStage(); tyFocus(); }
+  else tyFinish(false);
+}
+async function tyFinish(early) {
+  if (TY.done || !TY.started) return;
+  if (early && TY.input) { TY.finals[TY.seg] = TY.input; TY.input = ""; }
+  TY.done = true; TY.tEnd = performance.now(); tyStopTick(); tyStats();
+  const secs = Math.max(1, (TY.tEnd - TY.t0) / 1000);
+  const typed = TY.segs.map((s, i) => s.slice(0, str(TY.finals[i]).length)).filter(Boolean);
+  const chars = typed.reduce((s, x) => s + x.length, 0), all = TY.segs.reduce((s, x) => s + x.length, 0);
+  const wordsN = words(typed.join(" "));
+  const byCount = o => Object.keys(o).sort((a, b) => o[b] - o[a]);
+  const rec = {
+    kind: "typing", item: TY.itemId, title: TY.title,
+    wpm: Math.round(tyNet() / 5 / (secs / 60)), acc: TY.total ? Math.round(TY.ok / TY.total * 100) : 0,
+    secs: Math.round(secs), chars, words: wordsN, wpmReal: Math.round(wordsN / (secs / 60)),
+    errors: TY.err, backspaces: TY.bs,
+    miss: byCount(TY.miss).slice(0, 8).map(k => ({ k, n: TY.miss[k] })),
+    missWords: byCount(TY.missW).slice(0, 12)
+  };
+  if (chars < all) rec.partial = true;
+  const prev = allAttempts().filter(a => a.kind === "typing" && typeof a.wpm === "number" && !a.partial);
+  const prevBest = prev.length ? Math.max.apply(null, prev.map(a => a.wpm)) : null;
+  const ta = $("#ty-input"); if (ta) { ta.readOnly = true; ta.blur(); }
+  const b = $("#ty-end"); if (b) b.disabled = true;
+  tyRenderResult(rec, prevBest);
+  if (!chars) return;
+  await saveAttempt(rec);
+  const m = document.getElementById("ty-save-msg"); if (m) m.textContent = cap.db ? "記録しました" : "記録しました（この端末に保存）";
+  renderTyHist();
+}
+function tyRenderResult(r, prevBest) {
+  const box = $("#ty-result"); box.textContent = ""; box.hidden = false;
+  const tile = (k, v, s) => h("div", { class: "tile" }, h("span", { class: "k" }, k), h("span", { class: "v" }, v), h("span", { class: "s" }, s));
+  const advice = r.acc < 95 ? "正確さが95%を下回りました。次は少しゆっくり打って、打ち間違いを減らすことを優先しましょう。"
+    : r.wpm >= 40 ? "本番で十分に戦える速さです。この速さを保ったまま、決まり文句と模範解答を続けましょう。"
+    : r.wpm >= 30 ? "目標の35〜40 WPMまであと少しです。正確さを保ったまま、毎日5分続けましょう。"
+    : "まずは正確さを保ったまま30 WPMを目指しましょう。キーボードを見ずに打てているかも確認してください。";
+  const best = prevBest == null || r.partial ? "" : r.wpm > prevBest ? " · 自己ベスト更新（これまで " + prevBest + " WPM）" : " · 自己ベスト " + prevBest + " WPM";
+  box.append(
+    h("div", { class: "review-head" }, h("h3", null, "結果：" + r.title + (r.partial ? "（途中まで）" : "")), h("p", { class: "sub" }, advice)),
+    h("div", { class: "score-hero" }, h("span", { class: "num" }, String(r.wpm)), h("span", { class: "den" }, "WPM"),
+      h("span", { class: "sub" }, "正確さ " + r.acc + "% · " + fmt(r.secs) + " · " + r.words + "語" + best)),
+    h("div", { class: "tiles" },
+      tile("7分で打てる量", r.wpmReal > 0 ? "約" + Math.round(r.wpmReal * 7) + "語" : "–", "考える時間を除いた、打つだけの量"),
+      tile("130語のメール", r.wpmReal > 0 ? fmt(130 / r.wpmReal * 60) : "–", "打つだけにかかる時間"),
+      tile("打ち間違い", r.errors + "回", "Backspace " + r.backspaces + "回")));
+  if (r.miss.length) box.append(h("div", { class: "block" }, h("h4", null, "ミスが多いキー"),
+    h("div", { class: "keys" }, r.miss.map(x => h("span", { class: "key" }, x.k, h("small", null, "×" + x.n))))));
+  if (r.missWords.length) box.append(h("div", { class: "block" }, h("h4", null, "ミスした単語"), h("p", { class: "en" }, r.missWords.join(", "))));
+  const S = TY_SETS[TY.set];
+  box.append(h("div", { class: "actions" },
+    r.missWords.length ? h("button", { type: "button", class: "btn primary", onclick: () => { tyLoad(r.missWords.slice(0, 10).map(w => (w + " ").repeat(3).trim()), "ミスした単語", "missed"); tyTop(); } }, "ミスした単語を練習（各3回）") : null,
+    h("button", { type: "button", class: "btn" + (r.missWords.length ? "" : " primary"), onclick: () => { tyLoad(TY.segs, TY.title, TY.itemId); tyTop(); } }, "同じ文でもう一度"),
+    S.paste ? null : h("button", { type: "button", class: "btn ghost", onclick: () => { tyNext(); tyTop(); } }, S.drill ? "別の" + TY_DRILL_N + "文へ" : "次の文章へ"),
+    h("span", { class: "save-msg", id: "ty-save-msg" })));
+  box.scrollIntoView({ behavior: smooth(), block: "start" });
+}
+function tyTop() { $("#ty-stage").scrollIntoView({ behavior: smooth(), block: "start" }); tyFocus(); }
+function tyNext() {
+  const S = TY_SETS[TY.set];
+  if (S.list) { const n = tyItems().length; if (n) TY.item = (TY.item + 1) % n; tyRenderSource(); }
+  tyPrepare();
+}
+function tyOpenModel(kind, idx) {
+  TY.set = TY_SETS.findIndex(S => S.id === (kind === "email" ? "md-email" : "md-disc")); TY.item = idx;
+  show("typing"); tyRenderSource(); tyPrepare(); tyFocus();
+}
+function tyFromText(title, text) {
+  TY.set = TY_SETS.findIndex(S => S.paste); TY.paste = str(text); TY.pasteTitle = str(title);
+  store.set("ty-paste", TY.paste.slice(0, 4000)); store.set("ty-paste-title", TY.pasteTitle);
+  show("typing"); tyRenderSource(); tyPrepare(); tyFocus();
+}
+function tyLogChanged() {
+  renderTyHist();
+  if (TY_SETS[TY.set].id === "mine" && !TY.started) { tyRenderSource(); if (!TY.segs.length) tyPrepare(); }
+}
+function renderTyHist() {
+  const box = $("#ty-hist"); if (!box) return;
+  box.textContent = "";
+  const xs = allAttempts().filter(a => a.kind === "typing" && typeof a.wpm === "number");
+  if (!xs.length) { box.append(h("p", { class: "empty" }, "まだ記録がありません。1回打ち終わると、ここにWPMと正確さが並びます。")); return; }
+  const full = xs.filter(a => !a.partial);
+  const best = full.length ? Math.max.apply(null, full.map(a => a.wpm)) : null;
+  const last = xs.slice(0, 5), avg = Math.round(last.reduce((s, a) => s + a.wpm, 0) / last.length);
+  box.append(h("p", { class: "sub" }, (best != null ? "自己ベスト " + best + " WPM · " : "") + "直近" + last.length + "回の平均 " + avg + " WPM · 全" + xs.length + "回"),
+    h("ol", { class: "ty-hist" }, xs.slice(0, 10).map(a => h("li", null,
+      h("span", { class: "log-when" }, whenText(a.ts)),
+      h("span", null, str(a.title) + (a.partial ? "（途中まで）" : "")),
+      h("span", { class: "log-res" }, a.wpm + " WPM · " + (a.acc != null ? a.acc : "–") + "%")))));
 }
 
 /* ================= Profile / ruler / home ================= */
@@ -3487,7 +3869,7 @@ function renderPlanNow() {
 }
 
 /* ================= Log ================= */
-const KIND_LABEL = { repeat: "Listen & Repeat", interview: "Interview", build: "Build a Sentence", email: "Email", discussion: "Discussion" };
+const KIND_LABEL = { repeat: "Listen & Repeat", interview: "Interview", build: "Build a Sentence", email: "Email", discussion: "Discussion", typing: "Typing" };
 function renderLogStatus() {
   const el = document.getElementById("log-status"); if (!el) return;
   el.textContent = cap.mode === "db" ? "答案とスコアはこのページに保存され、どの端末から開いても同じ記録が表示されます。Claudeもこの記録を読めます。"
@@ -3509,6 +3891,7 @@ function resultText(a) {
     if (a.aiStatus === "waiting") return "採点待ち";
     return a.mode === "dict" ? (a.acc != null ? a.acc + "%" : "–") : (a.avg != null ? a.avg + "/5" : "–");
   }
+  if (a.kind === "typing") return (typeof a.wpm === "number" ? a.wpm : "–") + " WPM";
   if (typeof a.aiScore === "number") return "AI " + a.aiScore.toFixed(1);
   if (a.kind === "email" || a.kind === "discussion") return (a.words || 0) + "語";
   if (a.kind === "interview") return arr(a.answers).filter(x => x && x.text).length + "問";
@@ -3528,7 +3911,8 @@ function renderTiles() {
     tile("Build a Sentence", bAvg == null ? "–" : bAvg.toFixed(1), "直近5回の平均（10問あたり）"),
     tile("Email", aiAvg("email"), "AI採点・直近5回の平均"),
     tile("Discussion", aiAvg("discussion"), "AI採点・直近5回の平均"),
-    tile("Interview", aiAvg("interview"), "AI採点・直近5回の平均"));
+    tile("Interview", aiAvg("interview"), "AI採点・直近5回の平均"),
+    tile("Typing", (() => { const xs = all.filter(a => a.kind === "typing" && typeof a.wpm === "number").slice(0, 5); return xs.length ? String(Math.round(xs.reduce((s, a) => s + a.wpm, 0) / xs.length)) : "–"; })(), "WPM・直近5回の平均"));
 }
 function fillLogBody(a, body) {
   body.textContent = "";
@@ -3549,6 +3933,10 @@ function fillLogBody(a, body) {
   } else if (a.kind === "interview") {
     arr(a.answers).forEach(x => { if (x && x.text) body.append(h("p", null, h("b", null, "Q" + x.q + " "), h("span", { class: "en" }, x.text))); });
     if (a.ai) { const s = INTERVIEW_SETS.find(x => x.id === a.item); const out = h("div"); renderInterviewAI(s, a.ai, out); body.append(out); }
+  } else if (a.kind === "typing") {
+    body.append(h("p", null, (a.wpm != null ? a.wpm : "–") + " WPM · 正確さ " + (a.acc != null ? a.acc : "–") + "% · " + fmt(a.secs || 0) + " · " + (a.words || 0) + "語" + (a.partial ? "（途中まで）" : "")));
+    if (arr(a.miss).length) body.append(h("p", null, "ミスが多いキー：" + arr(a.miss).map(x => str(x && x.k) + " ×" + (x && x.n)).join("、")));
+    if (arr(a.missWords).length) body.append(h("p", null, "ミスした単語：", h("span", { class: "en" }, arr(a.missWords).join(", "))));
   } else if (a.kind === "build") {
     body.append(h("p", null, "かかった時間 " + fmt(a.secs || 0) + (a.overtime ? "（超過）" : "")));
     const wrong = arr(a.wrong);
@@ -3739,7 +4127,7 @@ function init() {
   tts.init();
   $$("[data-mic]").forEach(b => b.addEventListener("change", () => { settings.mic = b.checked; saveSettings(); micBoxes(); }));
   micBoxes();
-  rpInit(); ivInit(); bsInit(); wrInit("email"); wrInit("discussion"); profileInit();
+  rpInit(); ivInit(); bsInit(); wrInit("email"); wrInit("discussion"); tyInit(); profileInit();
   applyHideTime();
   renderLog(); renderHomeDays(); renderPlanNow();
   let start = "home";
