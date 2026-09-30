@@ -43,6 +43,8 @@ except ImportError:
 BASE_URL = os.environ.get("WEBCLASS_DL_BASE_URL", "https://lms-wc.el.kanazawa-u.ac.jp").rstrip("/")
 WEBCLASS_URL = BASE_URL + "/webclass/"
 INDEX_URL = WEBCLASS_URL + "index.php"
+# WebClass の login.php は管理者用なので、ログインはアカンサスポータルから行う
+PORTAL_URL = os.environ.get("WEBCLASS_DL_PORTAL_URL", "https://acanthus.cis.kanazawa-u.ac.jp/")
 WEBCLASS_HOST = urlparse(BASE_URL).netloc
 
 DEFAULT_SAVE_DIR = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "講義資料"
@@ -321,44 +323,49 @@ class WebClassDownloader:
             return False
 
     def ensure_login(self) -> None:
-        self.goto_index_quietly(self.page)
-        if self.on_course_list(self.page):
-            print("前回のログイン状態でWebClassに入れました。")
-            return
+        if STATE_FILE.exists():
+            self.goto_index_quietly(self.page)
+            if self.on_course_list(self.page):
+                print("前回のログイン状態でWebClassに入れました。")
+                return
+
+        # WebClass の login.php（メンテナンス用）ではなく、アカンサスポータルを開く
+        self.pacer.wait()
+        try:
+            self.page.goto(PORTAL_URL, wait_until="load", timeout=60000)
+        except PlaywrightError:
+            pass
 
         print()
         print("=" * 60)
-        print("開いたブラウザの画面で、金沢大学IDでログインしてください。")
+        print("開いたブラウザ（アカンサスポータル）で、金沢大学IDでログインしてください。")
         print("（多要素認証もブラウザ上で行ってください）")
-        print("ログインできたら、WebClass の「コース一覧」の画面まで進んでください。")
-        print("うまく進めない場合は、アカンサスポータル")
-        print("  https://acanthus.cis.kanazawa-u.ac.jp/")
-        print("から WebClass を開いても大丈夫です。")
+        print("ログインできたら、ポータルの「時間割」などから WebClass を開いてください。")
+        print("WebClass の画面が表示されたら、ターミナルに戻って Enter を押します。")
+        print()
+        print("※「メンテナンス用のログイン画面です」と書かれた WebClass の画面には")
+        print("  パスワードを入力しないでください（そこからはログインできません）。")
         print("=" * 60)
         while True:
             try:
-                input("\nコース一覧が表示されたら、ここで Enter キーを押してください（やめるときは Ctrl+C）: ")
+                input("\nWebClass が表示されたら、ここで Enter キーを押してください（やめるときは Ctrl+C）: ")
             except EOFError:
                 raise KeyboardInterrupt
-            # ポータルから開いた場合など、別のタブに WebClass があるかもしれない
-            found = None
-            for p in reversed(self.context.pages):
-                if self.on_course_list(p):
-                    found = p
-                    break
-            if found is None:
-                self.goto_index_quietly(self.page)
-                if self.on_course_list(self.page):
-                    found = self.page
-            if found is not None:
+            # ポータルから開いた WebClass は別のタブになっていることが多い。
+            # ログインできたかは、新しいタブでコース一覧を開いて確かめる
+            check = self.context.new_page()
+            self.goto_index_quietly(check)
+            if self.on_course_list(check):
                 # 使うタブを 1 つにまとめる（同時に複数の画面で操作しないため）
                 for p in list(self.context.pages):
-                    if p is not found:
+                    if p is not check:
                         p.close()
-                self.page = found
+                self.page = check
                 print("ログインを確認できました。")
                 return
-            print("まだ WebClass のコース一覧が確認できません。ログインが終わっているか確認してください。")
+            check.close()
+            print("まだ WebClass にログインできていないようです。")
+            print("ポータルにログインしたあと、ポータルの中から WebClass を開いてから Enter を押してください。")
 
     def goto_index_quietly(self, page) -> None:
         self.pacer.wait()
