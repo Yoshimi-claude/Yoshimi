@@ -494,6 +494,7 @@ mark.hl { background: linear-gradient(transparent 55%, var(--marker-soft) 55%); 
 .syncbox textarea { font-family: var(--f-mono); font-size: 12px; min-height: 90px; }
 
 /* typing */
+.typer { display: grid; gap: 16px; }
 .ty-stage { display: grid; gap: 12px; }
 .ty-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .ty-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 600 12px/1.4 var(--f-mono); color: var(--ink-3); letter-spacing: .04em; }
@@ -875,8 +876,7 @@ table.t.narrow { min-width: 380px; }
     <div class="field wide"><span class="label">題材</span><div class="chips" id="ty-sets"></div></div>
   </div>
   <div id="ty-source"></div>
-  <div class="ty-stage" id="ty-stage"></div>
-  <div class="review" id="ty-result" hidden></div>
+  <div id="ty-box"></div>
   <div class="block">
     <h2 class="h2">タイピングの記録</h2>
     <div id="ty-hist"></div>
@@ -2163,7 +2163,8 @@ function show(v, opts) {
   if (currentView && v !== currentView) {
     if (currentView === "repeat" && RP.running) rpAbort();
     if (currentView === "interview" && IV.running) ivAbort();
-    if (currentView === "typing" && TY.started && !TY.done) tyLoad(TY.segs, TY.title, TY.itemId);
+    if (currentView === "typing" && TYV.typer) TYV.typer.stop();
+    if ((currentView === "email" || currentView === "discussion") && WR[currentView].typer) WR[currentView].typer.stop();
   }
   currentView = v;
   VIEWS.forEach(x => { const s = document.getElementById("v-" + x); if (s) s.hidden = x !== v; });
@@ -2284,7 +2285,7 @@ function corrList(corr) {
     h("div", null, h("del", null, str(c.original)), " → ", h("ins", null, str(c.fix)), h("span", { class: "why" }, str(c.why_ja))))));
 }
 function mk(state) { return h("span", { class: "mk " + state }, state === "ok" ? "○" : state === "mid" ? "△" : "×"); }
-function renderWritingAI(kind, data, text, out) {
+function renderWritingAI(kind, data, text, out, onPractice) {
   out.textContent = "";
   const score = normScore(data.score);
   const corr = arr(data.corrections).filter(c => c && str(c.original).trim() && str(c.fix).trim()).slice(0, 10);
@@ -2305,7 +2306,7 @@ function renderWritingAI(kind, data, text, out) {
   if (data.rewrite) {
     const rw = str(data.rewrite);
     card.append(h("div", { class: "rewrite" }, h("h4", null, "書き直し例（あなたのアイデアを5点レベルに）"), h("p", { class: "en pre" }, rw), h("p", { class: "wc" }, words(rw) + "語"),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "btn small ghost", onclick: () => tyFromText("書き直し例（" + (kind === "email" ? "Email" : "Discussion") + "）", rw) }, "この書き直し例で写し打ち練習"))));
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn small ghost", onclick: () => onPractice ? onPractice(rw) : tyFromText("書き直し例（" + (kind === "email" ? "Email" : "Discussion") + "）", rw) }, onPractice ? "この書き直し例を下で写し打ち" : "この書き直し例で写し打ち練習"))));
   }
   card.append(h("p", { class: "fineprint" }, "AIの採点は目安です。本番のスコアを保証するものではありません。"));
   out.append(card);
@@ -3266,6 +3267,7 @@ function wrInit(kind) {
 function wrLoad(kind, idx, clearDraft) {
   const W = WR[kind];
   wrStopTimer(kind);
+  if (W.typer) { W.typer.stop(); W.typer = null; W.tyUseRewrite = null; }
   if (clearDraft) store.del("draft:" + kind + ":" + W.list[W.idx].id);
   Object.assign(W, { idx, started: false, submitted: false, overtime: false, text: "", secs: 0, savePromise: null });
   wrRender(kind);
@@ -3426,8 +3428,8 @@ function wrReview(kind) {
       copyButton("添削依頼文をコピー", () => writingPromptText(kind, p, text, W.secs))),
     out));
   box.append(h("details", { class: "model" }, h("summary", null, "模範解答（黄色の表現はそのまま使い回せます）"),
-    h("div", { class: "model-body" }, h("p", { class: "en pre" }, markNodes(p.model)), h("p", { class: "wc" }, words(unmark(p.model)) + "語"),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "btn small ghost", onclick: () => tyOpenModel(kind, W.idx) }, "この模範解答で写し打ち練習")))));
+    h("div", { class: "model-body" }, h("p", { class: "en pre" }, markNodes(p.model)), h("p", { class: "wc" }, words(unmark(p.model)) + "語"))));
+  box.append(wrTypingBlock(kind));
   box.append(rubricBox(kind));
   box.append(h("div", { class: "actions" },
     h("button", { type: "button", class: "btn", onclick: () => { wrLoad(kind, W.idx); document.getElementById("v-" + kind).scrollIntoView({ behavior: smooth(), block: "start" }); } }, "同じ問題をもう一度書く"),
@@ -3437,7 +3439,8 @@ async function wrAI(kind, out, btn) {
   const W = WR[kind], p = W.list[W.idx], text = W.text;
   const data = await runAI(writingPrompt(kind, p, text, W.secs), out, btn);
   if (!data) return;
-  renderWritingAI(kind, data, text, out);
+  renderWritingAI(kind, data, text, out, rw => { if (W.tyUseRewrite) W.tyUseRewrite(rw, true); });
+  if (W.tyUseRewrite && data.rewrite) W.tyUseRewrite(data.rewrite, false);
   const hd = W.savePromise ? await W.savePromise : null;
   if (hd) patchAttempt(hd, { ai: data, aiScore: normScore(data.score) });
 }
@@ -3517,8 +3520,6 @@ const TY_SETS = [
   { id: "paste", ja: "貼り付けた英文", paste: true }
 ];
 const TY_DRILL_N = 8;
-const TY = { set: 0, item: 0, segs: [], seg: 0, input: "", finals: [], started: false, done: false, t0: 0, tEnd: 0, tick: 0, ok: 0, total: 0, err: 0, bs: 0, miss: {}, missW: {}, title: "", itemId: "",
-  paste: str(store.get("ty-paste", "")), pasteTitle: str(store.get("ty-paste-title", "")) };
 /* what can be typed on a plain English keyboard: straight quotes, no accents, one line break between paragraphs */
 function tyNorm(t) {
   return str(t).normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -3526,232 +3527,260 @@ function tyNorm(t) {
     .replace(/[\t ]/g, " ").replace(/\r\n?/g, "\n").replace(/[^\x20-\x7e\n]/g, "")
     .split("\n").map(l => l.replace(/ +/g, " ").trim()).join("\n").replace(/\n{2,}/g, "\n").trim();
 }
+const tyKeyLabel = ch => ch === " " ? "スペース" : ch === "\n" ? "Enter" : /[A-Z]/.test(ch) ? "大文字 " + ch : ch;
+
+/* one copy-typing box: the text to copy (coloured as you type), the input, live stats and the result.
+   Used by the Typing tab and under every Email / Discussion review.
+   opts: emptyText(), shuffle() + shuffleLabel (drills), next() + nextLabel(), onSaved() */
+function makeTyper(opts) {
+  opts = opts || {};
+  const S = { segs: [], seg: 0, input: "", finals: [], started: false, done: false, t0: 0, tEnd: 0, tick: 0, ok: 0, total: 0, err: 0, bs: 0, miss: {}, missW: {}, title: "", itemId: "" };
+  const stage = h("div", { class: "ty-stage" });
+  const result = h("div", { class: "review ty-result", hidden: true });
+  const root = h("div", { class: "typer" }, stage, result);
+  let ta = null, target = null, stats = null, warn = null, endBtn = null;
+
+  const stopTick = () => { if (S.tick) { clearInterval(S.tick); S.tick = 0; } };
+  const setWarn = msg => { if (warn) { warn.textContent = msg; warn.hidden = !msg; } };
+  const focus = () => { if (ta && !ta.readOnly) { try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); } } };
+  const toTop = () => { stage.scrollIntoView({ behavior: smooth(), block: "start" }); focus(); };
+  function load(segs, title, itemId) {
+    stopTick();
+    Object.assign(S, { segs: arr(segs), seg: 0, input: "", finals: [], started: false, done: false, t0: 0, tEnd: 0, ok: 0, total: 0, err: 0, bs: 0, miss: {}, missW: {}, title: str(title), itemId: str(itemId) });
+    result.hidden = true; result.textContent = "";
+    renderStage();
+  }
+  const restart = () => load(S.segs, S.title, S.itemId);
+  function renderStage() {
+    stage.textContent = ""; ta = target = stats = warn = endBtn = null;
+    if (!S.segs.length) { stage.append(h("p", { class: "empty" }, opts.emptyText ? opts.emptyText() : "練習できる文章がありません。")); return; }
+    const seg = S.segs[S.seg], long = seg.length > 140;
+    ta = h("textarea", { class: "ty-input" + (long ? " long" : ""), rows: long ? 8 : 2, spellcheck: "false", autocomplete: "off", autocorrect: "off", autocapitalize: "off",
+      "aria-label": "ここに入力", placeholder: S.started ? "" : "ここをクリックして打ち始めると、計測が始まります" });
+    const box = ta;
+    box.addEventListener("input", () => onInput(box));
+    box.addEventListener("paste", e => { e.preventDefault(); setWarn("ここには貼り付けできません。自分で打ちましょう。"); });
+    box.addEventListener("drop", e => e.preventDefault());
+    box.addEventListener("compositionstart", () => setWarn("日本語入力がオンになっています。半角英数に切り替えてください。"));
+    box.addEventListener("keydown", e => { if (e.key === "Tab") e.preventDefault(); });
+    target = h("div", { class: "ty-target", onclick: () => box.focus() });
+    for (let k = 0; k < seg.length; k++) target.append(h("span", { class: "c" + (seg[k] === "\n" ? " nl" : "") }, seg[k] === "\n" ? "↵\n" : seg[k]));
+    stats = h("div", { class: "ty-stats", "aria-live": "off" });
+    warn = h("p", { class: "over", hidden: true });
+    endBtn = h("button", { type: "button", class: "btn ghost", disabled: !S.started, onclick: () => finish(true) }, "ここで終了して記録");
+    const nextSeg = S.segs[S.seg + 1];
+    add(stage, [
+      h("div", { class: "ty-bar" }, h("span", { class: "bs-count" }, S.segs.length > 1 ? (S.seg + 1) + " / " + S.segs.length : words(seg) + "語"), stats),
+      target,
+      nextSeg ? h("p", { class: "ty-next" }, "次： " + nextSeg) : null,
+      ta, warn,
+      h("div", { class: "actions" },
+        h("button", { type: "button", class: "btn", onclick: () => { restart(); focus(); } }, "最初からやり直す"),
+        endBtn,
+        opts.shuffle && S.itemId !== "missed" ? h("button", { type: "button", class: "btn ghost", onclick: () => { opts.shuffle(); focus(); } }, opts.shuffleLabel || "別の文にする") : null)]);
+    paint(); showStats();
+  }
+  function paint() {
+    if (!target) return;
+    const seg = S.segs[S.seg] || "", v = S.input, kids = target.children;
+    for (let k = 0; k < kids.length; k++) {
+      let c = "c" + (seg[k] === "\n" ? " nl" : "");
+      if (k < v.length) c += v[k] === seg[k] ? " ok" : " ng";
+      else if (k === v.length) c += " cur";
+      if (kids[k].className !== c) kids[k].className = c;
+    }
+    const cur = kids[Math.min(v.length, kids.length - 1)];
+    if (cur && target.scrollHeight > target.clientHeight + 4) {
+      const top = cur.offsetTop;
+      if (top < target.scrollTop + 8 || top > target.scrollTop + target.clientHeight - 64) target.scrollTop = Math.max(0, top - 64);
+    }
+  }
+  function net() {
+    let n = 0;
+    S.finals.forEach((f, i) => { const s = S.segs[i] || ""; for (let k = 0; k < f.length; k++) if (f[k] === s[k]) n++; });
+    if (!S.done) { const s = S.segs[S.seg] || "", v = S.input; for (let k = 0; k < v.length; k++) if (v[k] === s[k]) n++; }
+    return n;
+  }
+  function showStats() {
+    if (!stats) return;
+    const secs = S.started ? ((S.done ? S.tEnd : performance.now()) - S.t0) / 1000 : 0;
+    const wpm = secs >= 2 ? Math.round(net() / 5 / (secs / 60)) : null;
+    const acc = S.total ? Math.round(S.ok / S.total * 100) : null;
+    const all = S.segs.reduce((n, x) => n + x.length, 0);
+    const did = S.finals.reduce((n, f) => n + (f ? f.length : 0), 0) + (S.done ? 0 : S.input.length);
+    stats.textContent = "";
+    stats.append(h("span", null, "時間", h("b", null, fmt(secs))), h("span", null, "WPM", h("b", null, wpm == null ? "–" : String(wpm))),
+      h("span", null, "正確さ", h("b", null, acc == null ? "–" : acc + "%")), h("span", null, "進み", h("b", null, (all ? Math.min(100, Math.round(did / all * 100)) : 0) + "%")));
+  }
+  function onInput(box) {
+    if (S.done || box !== ta) return;
+    const seg = S.segs[S.seg]; if (seg == null) return;
+    let v = box.value.replace(/\r/g, "");
+    if (v.length > seg.length) { v = v.slice(0, seg.length); box.value = v; }
+    setWarn(/[^\x00-\x7f]/.test(v) ? "日本語入力（全角）になっています。半角英数に切り替えてください。" : "");
+    const old = S.input; let p = 0;
+    while (p < old.length && p < v.length && old[p] === v[p]) p++;
+    if (old.length > p) S.bs += old.length - p;
+    for (let k = p; k < v.length; k++) {
+      S.total++;
+      if (v[k] === seg[k]) { S.ok++; continue; }
+      S.err++;
+      /* only the first slip in a row counts toward the weak keys, not the letters that shift after it */
+      if (k > 0 && v[k - 1] !== seg[k - 1]) continue;
+      const lab = tyKeyLabel(seg[k]); S.miss[lab] = (S.miss[lab] || 0) + 1;
+      if (!/\s/.test(seg[k])) {
+        let a = k, b = k;
+        while (a > 0 && !/\s/.test(seg[a - 1])) a--;
+        while (b < seg.length && !/\s/.test(seg[b])) b++;
+        const w = seg.slice(a, b).replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "");
+        if (w) S.missW[w] = (S.missW[w] || 0) + 1;
+      }
+    }
+    S.input = v;
+    if (!S.started && v.length) {
+      S.started = true; S.t0 = performance.now(); S.tick = setInterval(showStats, 250);
+      if (endBtn) endBtn.disabled = false;
+      box.removeAttribute("placeholder");
+    }
+    paint(); showStats();
+    if (v.length >= seg.length) segDone();
+  }
+  function segDone() {
+    S.finals[S.seg] = S.input; S.input = "";
+    if (S.seg + 1 < S.segs.length) { S.seg++; renderStage(); focus(); }
+    else finish(false);
+  }
+  async function finish(early) {
+    if (S.done || !S.started) return;
+    if (early && S.input) { S.finals[S.seg] = S.input; S.input = ""; }
+    S.done = true; S.tEnd = performance.now(); stopTick(); showStats();
+    const secs = Math.max(1, (S.tEnd - S.t0) / 1000);
+    const typed = S.segs.map((s, i) => s.slice(0, str(S.finals[i]).length)).filter(Boolean);
+    const chars = typed.reduce((n, x) => n + x.length, 0), all = S.segs.reduce((n, x) => n + x.length, 0);
+    const wordsN = words(typed.join(" "));
+    const byCount = o => Object.keys(o).sort((a, b) => o[b] - o[a]);
+    const rec = {
+      kind: "typing", item: S.itemId, title: S.title,
+      wpm: Math.round(net() / 5 / (secs / 60)), acc: S.total ? Math.round(S.ok / S.total * 100) : 0,
+      secs: Math.round(secs), chars, words: wordsN, wpmReal: Math.round(wordsN / (secs / 60)),
+      errors: S.err, backspaces: S.bs,
+      miss: byCount(S.miss).slice(0, 8).map(k => ({ k, n: S.miss[k] })),
+      missWords: byCount(S.missW).slice(0, 12)
+    };
+    if (chars < all) rec.partial = true;
+    const prev = allAttempts().filter(a => a.kind === "typing" && typeof a.wpm === "number" && !a.partial);
+    const prevBest = prev.length ? Math.max.apply(null, prev.map(a => a.wpm)) : null;
+    if (ta) { ta.readOnly = true; ta.blur(); }
+    if (endBtn) endBtn.disabled = true;
+    const msg = renderResult(rec, prevBest);
+    if (!chars) return;
+    await saveAttempt(rec);
+    msg.textContent = cap.db ? "記録しました" : "記録しました（この端末に保存）";
+    if (opts.onSaved) opts.onSaved(rec);
+  }
+  function renderResult(r, prevBest) {
+    result.textContent = ""; result.hidden = false;
+    const tile = (k, v, s) => h("div", { class: "tile" }, h("span", { class: "k" }, k), h("span", { class: "v" }, v), h("span", { class: "s" }, s));
+    const advice = r.acc < 95 ? "正確さが95%を下回りました。次は少しゆっくり打って、打ち間違いを減らすことを優先しましょう。"
+      : r.wpm >= 40 ? "本番で十分に戦える速さです。この速さを保ったまま、決まり文句と模範解答を続けましょう。"
+      : r.wpm >= 30 ? "目標の35〜40 WPMまであと少しです。正確さを保ったまま、毎日5分続けましょう。"
+      : "まずは正確さを保ったまま30 WPMを目指しましょう。キーボードを見ずに打てているかも確認してください。";
+    const best = prevBest == null || r.partial ? "" : r.wpm > prevBest ? " · 自己ベスト更新（これまで " + prevBest + " WPM）" : " · 自己ベスト " + prevBest + " WPM";
+    const msg = h("span", { class: "save-msg" });
+    add(result, [
+      h("div", { class: "review-head" }, h("h3", null, "結果：" + r.title + (r.partial ? "（途中まで）" : "")), h("p", { class: "sub" }, advice)),
+      h("div", { class: "score-hero" }, h("span", { class: "num" }, String(r.wpm)), h("span", { class: "den" }, "WPM"),
+        h("span", { class: "sub" }, "正確さ " + r.acc + "% · " + fmt(r.secs) + " · " + r.words + "語" + best)),
+      h("div", { class: "tiles" },
+        tile("7分で打てる量", r.wpmReal > 0 ? "約" + Math.round(r.wpmReal * 7) + "語" : "–", "考える時間を除いた、打つだけの量"),
+        tile("130語のメール", r.wpmReal > 0 ? fmt(130 / r.wpmReal * 60) : "–", "打つだけにかかる時間"),
+        tile("打ち間違い", r.errors + "回", "Backspace " + r.backspaces + "回")),
+      r.miss.length ? h("div", { class: "block" }, h("h4", null, "ミスが多いキー"),
+        h("div", { class: "keys" }, r.miss.map(x => h("span", { class: "key" }, x.k, h("small", null, "×" + x.n))))) : null,
+      r.missWords.length ? h("div", { class: "block" }, h("h4", null, "ミスした単語"), h("p", { class: "en" }, r.missWords.join(", "))) : null,
+      h("div", { class: "actions" },
+        r.missWords.length ? h("button", { type: "button", class: "btn primary", onclick: () => { load(r.missWords.slice(0, 10).map(w => (w + " ").repeat(3).trim()), "ミスした単語", "missed"); toTop(); } }, "ミスした単語を練習（各3回）") : null,
+        h("button", { type: "button", class: "btn" + (r.missWords.length ? "" : " primary"), onclick: () => { restart(); toTop(); } }, "同じ文でもう一度"),
+        opts.next ? h("button", { type: "button", class: "btn ghost", onclick: () => { opts.next(); toTop(); } }, opts.nextLabel ? opts.nextLabel() : "次へ") : null,
+        msg)]);
+    result.scrollIntoView({ behavior: smooth(), block: "start" });
+    return msg;
+  }
+  return {
+    el: root, load, restart, focus,
+    get running() { return S.started && !S.done; },
+    get segs() { return S.segs; },
+    /* leaving mid-run: throw the run away so the clock does not keep counting */
+    stop() { if (S.started && !S.done) restart(); else stopTick(); }
+  };
+}
+
+/* ---- the Typing tab ---- */
+const TYV = { set: 0, item: 0, typer: null, paste: str(store.get("ty-paste", "")), pasteTitle: str(store.get("ty-paste-title", "")) };
 function tyInit() {
   const box = $("#ty-sets");
-  TY_SETS.forEach((S, i) => box.append(h("button", { type: "button", class: "chip", onclick: () => { TY.set = i; TY.item = 0; tyRenderSource(); tyPrepare(); } }, S.ja)));
+  TY_SETS.forEach((S, i) => box.append(h("button", { type: "button", class: "chip", onclick: () => { TYV.set = i; TYV.item = 0; tyRenderSource(); tyPrepare(); } }, S.ja)));
+  TYV.typer = makeTyper({
+    emptyText: () => TY_SETS[TYV.set].paste ? "上の欄に練習したい英文を貼り付けて「この英文で練習する」を押してください。" : "練習できる文章がありません。",
+    shuffle: () => { if (TY_SETS[TYV.set].drill) tyPrepare(); },
+    shuffleLabel: "別の" + TY_DRILL_N + "文にする",
+    next: () => tyNext(),
+    nextLabel: () => TY_SETS[TYV.set].drill ? "別の" + TY_DRILL_N + "文へ" : TY_SETS[TYV.set].paste ? "もう一度最初から" : "次の文章へ",
+    onSaved: () => renderTyHist()
+  });
+  $("#ty-box").append(TYV.typer.el);
   tyRenderSource(); tyPrepare(); renderTyHist();
 }
-const tyItems = () => { const S = TY_SETS[TY.set]; return S.list ? S.list() : []; };
+const tyItems = () => { const S = TY_SETS[TYV.set]; return S.list ? S.list() : []; };
 function tyRenderSource() {
-  const S = TY_SETS[TY.set], box = $("#ty-source"); box.textContent = "";
-  $$("#ty-sets .chip").forEach((c, i) => c.setAttribute("aria-pressed", String(i === TY.set)));
+  const S = TY_SETS[TYV.set], box = $("#ty-source"); box.textContent = "";
+  $$("#ty-sets .chip").forEach((c, i) => c.setAttribute("aria-pressed", String(i === TYV.set)));
   if (S.drill) { box.append(h("p", { class: "note" }, S.note + "ランダムに" + TY_DRILL_N + "文出ます。1文を打ち終わると、次の文に進みます。")); return; }
   if (S.paste) {
     const ta = h("textarea", { rows: 5, spellcheck: "false", "aria-label": "練習したい英文", placeholder: "Dear Ms. Garcia, ..." });
-    ta.value = TY.paste;
+    ta.value = TYV.paste;
     box.append(h("div", { class: "block" },
       h("p", { class: "note" }, "練習したい英文（チャットでもらった書き直し例など）を貼り付けて「この英文で練習する」を押します。日本語や打てない記号は自動で取り除きます。"),
       ta,
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: () => {
-        TY.paste = ta.value; TY.pasteTitle = "";
-        store.set("ty-paste", TY.paste.slice(0, 4000)); store.set("ty-paste-title", "");
-        tyPrepare(); tyFocus();
+        TYV.paste = ta.value; TYV.pasteTitle = "";
+        store.set("ty-paste", TYV.paste.slice(0, 4000)); store.set("ty-paste-title", "");
+        tyPrepare(); TYV.typer.focus();
       } }, "この英文で練習する"))));
     return;
   }
   const list = tyItems();
   if (!list.length) { box.append(h("p", { class: "empty" }, S.empty || "練習できる文章がありません。")); return; }
-  if (TY.item >= list.length) TY.item = 0;
-  const sel = h("select", { "aria-label": "文章を選ぶ", onchange: e => { TY.item = parseInt(e.target.value, 10) || 0; tyPrepare(); } },
+  if (TYV.item >= list.length) TYV.item = 0;
+  const sel = h("select", { "aria-label": "文章を選ぶ", onchange: e => { TYV.item = parseInt(e.target.value, 10) || 0; tyPrepare(); } },
     list.map((it, i) => h("option", { value: String(i) }, it.title)));
-  sel.value = String(TY.item);
+  sel.value = String(TYV.item);
   box.append(h("div", { class: "field" }, h("span", { class: "label" }, "文章"), sel));
 }
 function tyPrepare() {
-  const S = TY_SETS[TY.set];
+  const S = TY_SETS[TYV.set];
   let segs = [], title = S.ja, itemId = S.id;
   if (S.drill) segs = shuffle(S.items).slice(0, TY_DRILL_N);
-  else if (S.paste) { segs = [TY.paste]; if (TY.pasteTitle) title = TY.pasteTitle; }
+  else if (S.paste) { segs = [TYV.paste]; if (TYV.pasteTitle) title = TYV.pasteTitle; }
   else {
-    const list = tyItems(), it = list[TY.item] || list[0];
+    const list = tyItems(), it = list[TYV.item] || list[0];
     if (it) { segs = [it.text]; title = S.ja.replace(/：.*$/, "") + "：" + it.title; itemId = S.id + ":" + it.id; }
   }
-  tyLoad(segs.map(tyNorm).filter(Boolean), title, itemId);
+  TYV.typer.load(segs.map(tyNorm).filter(Boolean), title, itemId);
 }
-function tyLoad(segs, title, itemId) {
-  tyStopTick();
-  Object.assign(TY, { segs, seg: 0, input: "", finals: [], started: false, done: false, t0: 0, tEnd: 0, ok: 0, total: 0, err: 0, bs: 0, miss: {}, missW: {}, title, itemId });
-  const r = $("#ty-result"); r.hidden = true; r.textContent = "";
-  tyRenderStage();
-}
-function tyStopTick() { if (TY.tick) { clearInterval(TY.tick); TY.tick = 0; } }
-function tyFocus() { const ta = $("#ty-input"); if (ta && !ta.readOnly) { try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); } } }
-function tyWarn(msg) { const el = $("#ty-warn"); if (el) { el.textContent = msg; el.hidden = !msg; } }
-function tyRenderStage() {
-  const st = $("#ty-stage"); st.textContent = "";
-  if (!TY.segs.length) {
-    st.append(h("p", { class: "empty" }, TY_SETS[TY.set].paste ? "上の欄に練習したい英文を貼り付けて「この英文で練習する」を押してください。" : "練習できる文章がありません。"));
-    return;
-  }
-  const seg = TY.segs[TY.seg], long = seg.length > 140;
-  const ta = h("textarea", { class: "ty-input" + (long ? " long" : ""), id: "ty-input", rows: long ? 8 : 2, spellcheck: "false", autocomplete: "off", autocorrect: "off", autocapitalize: "off",
-    "aria-label": "ここに入力", placeholder: TY.started ? "" : "ここをクリックして打ち始めると、計測が始まります" });
-  ta.addEventListener("input", () => tyOnInput(ta));
-  ta.addEventListener("paste", e => { e.preventDefault(); tyWarn("ここには貼り付けできません。自分で打ちましょう。"); });
-  ta.addEventListener("drop", e => e.preventDefault());
-  ta.addEventListener("compositionstart", () => tyWarn("日本語入力がオンになっています。半角英数に切り替えてください。"));
-  ta.addEventListener("keydown", e => { if (e.key === "Tab") e.preventDefault(); });
-  const target = h("div", { class: "ty-target", id: "ty-target", onclick: () => ta.focus() });
-  for (let k = 0; k < seg.length; k++) target.append(h("span", { class: "c" + (seg[k] === "\n" ? " nl" : "") }, seg[k] === "\n" ? "↵\n" : seg[k]));
-  const nextSeg = TY.segs[TY.seg + 1];
-  add(st, [
-    h("div", { class: "ty-bar" },
-      h("span", { class: "bs-count" }, TY.segs.length > 1 ? (TY.seg + 1) + " / " + TY.segs.length : words(seg) + "語"),
-      h("div", { class: "ty-stats", id: "ty-stats", "aria-live": "off" })),
-    target,
-    nextSeg ? h("p", { class: "ty-next" }, "次： " + nextSeg) : null,
-    ta,
-    h("p", { class: "over", id: "ty-warn", hidden: true }),
-    h("div", { class: "actions" },
-      h("button", { type: "button", class: "btn", onclick: () => { tyLoad(TY.segs, TY.title, TY.itemId); tyFocus(); } }, "最初からやり直す"),
-      h("button", { type: "button", class: "btn ghost", id: "ty-end", disabled: !TY.started, onclick: () => tyFinish(true) }, "ここで終了して記録"),
-      TY_SETS[TY.set].drill && TY.itemId !== "missed" ? h("button", { type: "button", class: "btn ghost", onclick: () => { tyPrepare(); tyFocus(); } }, "別の" + TY_DRILL_N + "文にする") : null)]);
-  tyPaint(); tyStats();
-}
-function tyPaint() {
-  const tg = $("#ty-target"); if (!tg) return;
-  const seg = TY.segs[TY.seg] || "", v = TY.input, kids = tg.children;
-  for (let k = 0; k < kids.length; k++) {
-    let c = "c" + (seg[k] === "\n" ? " nl" : "");
-    if (k < v.length) c += v[k] === seg[k] ? " ok" : " ng";
-    else if (k === v.length) c += " cur";
-    if (kids[k].className !== c) kids[k].className = c;
-  }
-  const cur = kids[Math.min(v.length, kids.length - 1)];
-  if (cur && tg.scrollHeight > tg.clientHeight + 4) {
-    const top = cur.offsetTop;
-    if (top < tg.scrollTop + 8 || top > tg.scrollTop + tg.clientHeight - 64) tg.scrollTop = Math.max(0, top - 64);
-  }
-}
-function tyNet() {
-  let n = 0;
-  TY.finals.forEach((f, i) => { const s = TY.segs[i] || ""; for (let k = 0; k < f.length; k++) if (f[k] === s[k]) n++; });
-  if (!TY.done) { const s = TY.segs[TY.seg] || "", v = TY.input; for (let k = 0; k < v.length; k++) if (v[k] === s[k]) n++; }
-  return n;
-}
-function tyStats() {
-  const el = $("#ty-stats"); if (!el) return;
-  const secs = TY.started ? ((TY.done ? TY.tEnd : performance.now()) - TY.t0) / 1000 : 0;
-  const wpm = secs >= 2 ? Math.round(tyNet() / 5 / (secs / 60)) : null;
-  const acc = TY.total ? Math.round(TY.ok / TY.total * 100) : null;
-  const all = TY.segs.reduce((s, x) => s + x.length, 0);
-  const did = TY.finals.reduce((s, f) => s + (f ? f.length : 0), 0) + (TY.done ? 0 : TY.input.length);
-  el.textContent = "";
-  el.append(h("span", null, "時間", h("b", null, fmt(secs))), h("span", null, "WPM", h("b", null, wpm == null ? "–" : String(wpm))),
-    h("span", null, "正確さ", h("b", null, acc == null ? "–" : acc + "%")), h("span", null, "進み", h("b", null, (all ? Math.min(100, Math.round(did / all * 100)) : 0) + "%")));
-}
-const tyKeyLabel = ch => ch === " " ? "スペース" : ch === "\n" ? "Enter" : /[A-Z]/.test(ch) ? "大文字 " + ch : ch;
-function tyOnInput(ta) {
-  if (TY.done) return;
-  const seg = TY.segs[TY.seg]; if (seg == null) return;
-  let v = ta.value.replace(/\r/g, "");
-  if (v.length > seg.length) { v = v.slice(0, seg.length); ta.value = v; }
-  tyWarn(/[^\x00-\x7f]/.test(v) ? "日本語入力（全角）になっています。半角英数に切り替えてください。" : "");
-  const old = TY.input; let p = 0;
-  while (p < old.length && p < v.length && old[p] === v[p]) p++;
-  if (old.length > p) TY.bs += old.length - p;
-  for (let k = p; k < v.length; k++) {
-    TY.total++;
-    if (v[k] === seg[k]) { TY.ok++; continue; }
-    TY.err++;
-    /* only the first slip in a row counts toward the weak keys, not the letters that shift after it */
-    if (k > 0 && v[k - 1] !== seg[k - 1]) continue;
-    const lab = tyKeyLabel(seg[k]); TY.miss[lab] = (TY.miss[lab] || 0) + 1;
-    if (!/\s/.test(seg[k])) {
-      let a = k, b = k;
-      while (a > 0 && !/\s/.test(seg[a - 1])) a--;
-      while (b < seg.length && !/\s/.test(seg[b])) b++;
-      const w = seg.slice(a, b).replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "");
-      if (w) TY.missW[w] = (TY.missW[w] || 0) + 1;
-    }
-  }
-  TY.input = v;
-  if (!TY.started && v.length) {
-    TY.started = true; TY.t0 = performance.now(); TY.tick = setInterval(tyStats, 250);
-    const b = $("#ty-end"); if (b) b.disabled = false;
-    ta.removeAttribute("placeholder");
-  }
-  tyPaint(); tyStats();
-  if (v.length >= seg.length) tySegDone();
-}
-function tySegDone() {
-  TY.finals[TY.seg] = TY.input; TY.input = "";
-  if (TY.seg + 1 < TY.segs.length) { TY.seg++; tyRenderStage(); tyFocus(); }
-  else tyFinish(false);
-}
-async function tyFinish(early) {
-  if (TY.done || !TY.started) return;
-  if (early && TY.input) { TY.finals[TY.seg] = TY.input; TY.input = ""; }
-  TY.done = true; TY.tEnd = performance.now(); tyStopTick(); tyStats();
-  const secs = Math.max(1, (TY.tEnd - TY.t0) / 1000);
-  const typed = TY.segs.map((s, i) => s.slice(0, str(TY.finals[i]).length)).filter(Boolean);
-  const chars = typed.reduce((s, x) => s + x.length, 0), all = TY.segs.reduce((s, x) => s + x.length, 0);
-  const wordsN = words(typed.join(" "));
-  const byCount = o => Object.keys(o).sort((a, b) => o[b] - o[a]);
-  const rec = {
-    kind: "typing", item: TY.itemId, title: TY.title,
-    wpm: Math.round(tyNet() / 5 / (secs / 60)), acc: TY.total ? Math.round(TY.ok / TY.total * 100) : 0,
-    secs: Math.round(secs), chars, words: wordsN, wpmReal: Math.round(wordsN / (secs / 60)),
-    errors: TY.err, backspaces: TY.bs,
-    miss: byCount(TY.miss).slice(0, 8).map(k => ({ k, n: TY.miss[k] })),
-    missWords: byCount(TY.missW).slice(0, 12)
-  };
-  if (chars < all) rec.partial = true;
-  const prev = allAttempts().filter(a => a.kind === "typing" && typeof a.wpm === "number" && !a.partial);
-  const prevBest = prev.length ? Math.max.apply(null, prev.map(a => a.wpm)) : null;
-  const ta = $("#ty-input"); if (ta) { ta.readOnly = true; ta.blur(); }
-  const b = $("#ty-end"); if (b) b.disabled = true;
-  tyRenderResult(rec, prevBest);
-  if (!chars) return;
-  await saveAttempt(rec);
-  const m = document.getElementById("ty-save-msg"); if (m) m.textContent = cap.db ? "記録しました" : "記録しました（この端末に保存）";
-  renderTyHist();
-}
-function tyRenderResult(r, prevBest) {
-  const box = $("#ty-result"); box.textContent = ""; box.hidden = false;
-  const tile = (k, v, s) => h("div", { class: "tile" }, h("span", { class: "k" }, k), h("span", { class: "v" }, v), h("span", { class: "s" }, s));
-  const advice = r.acc < 95 ? "正確さが95%を下回りました。次は少しゆっくり打って、打ち間違いを減らすことを優先しましょう。"
-    : r.wpm >= 40 ? "本番で十分に戦える速さです。この速さを保ったまま、決まり文句と模範解答を続けましょう。"
-    : r.wpm >= 30 ? "目標の35〜40 WPMまであと少しです。正確さを保ったまま、毎日5分続けましょう。"
-    : "まずは正確さを保ったまま30 WPMを目指しましょう。キーボードを見ずに打てているかも確認してください。";
-  const best = prevBest == null || r.partial ? "" : r.wpm > prevBest ? " · 自己ベスト更新（これまで " + prevBest + " WPM）" : " · 自己ベスト " + prevBest + " WPM";
-  box.append(
-    h("div", { class: "review-head" }, h("h3", null, "結果：" + r.title + (r.partial ? "（途中まで）" : "")), h("p", { class: "sub" }, advice)),
-    h("div", { class: "score-hero" }, h("span", { class: "num" }, String(r.wpm)), h("span", { class: "den" }, "WPM"),
-      h("span", { class: "sub" }, "正確さ " + r.acc + "% · " + fmt(r.secs) + " · " + r.words + "語" + best)),
-    h("div", { class: "tiles" },
-      tile("7分で打てる量", r.wpmReal > 0 ? "約" + Math.round(r.wpmReal * 7) + "語" : "–", "考える時間を除いた、打つだけの量"),
-      tile("130語のメール", r.wpmReal > 0 ? fmt(130 / r.wpmReal * 60) : "–", "打つだけにかかる時間"),
-      tile("打ち間違い", r.errors + "回", "Backspace " + r.backspaces + "回")));
-  if (r.miss.length) box.append(h("div", { class: "block" }, h("h4", null, "ミスが多いキー"),
-    h("div", { class: "keys" }, r.miss.map(x => h("span", { class: "key" }, x.k, h("small", null, "×" + x.n))))));
-  if (r.missWords.length) box.append(h("div", { class: "block" }, h("h4", null, "ミスした単語"), h("p", { class: "en" }, r.missWords.join(", "))));
-  const S = TY_SETS[TY.set];
-  box.append(h("div", { class: "actions" },
-    r.missWords.length ? h("button", { type: "button", class: "btn primary", onclick: () => { tyLoad(r.missWords.slice(0, 10).map(w => (w + " ").repeat(3).trim()), "ミスした単語", "missed"); tyTop(); } }, "ミスした単語を練習（各3回）") : null,
-    h("button", { type: "button", class: "btn" + (r.missWords.length ? "" : " primary"), onclick: () => { tyLoad(TY.segs, TY.title, TY.itemId); tyTop(); } }, "同じ文でもう一度"),
-    S.paste ? null : h("button", { type: "button", class: "btn ghost", onclick: () => { tyNext(); tyTop(); } }, S.drill ? "別の" + TY_DRILL_N + "文へ" : "次の文章へ"),
-    h("span", { class: "save-msg", id: "ty-save-msg" })));
-  box.scrollIntoView({ behavior: smooth(), block: "start" });
-}
-function tyTop() { $("#ty-stage").scrollIntoView({ behavior: smooth(), block: "start" }); tyFocus(); }
 function tyNext() {
-  const S = TY_SETS[TY.set];
-  if (S.list) { const n = tyItems().length; if (n) TY.item = (TY.item + 1) % n; tyRenderSource(); }
+  const S = TY_SETS[TYV.set];
+  if (S.list) { const n = tyItems().length; if (n) TYV.item = (TYV.item + 1) % n; tyRenderSource(); }
   tyPrepare();
 }
-function tyOpenModel(kind, idx) {
-  TY.set = TY_SETS.findIndex(S => S.id === (kind === "email" ? "md-email" : "md-disc")); TY.item = idx;
-  show("typing"); tyRenderSource(); tyPrepare(); tyFocus();
-}
 function tyFromText(title, text) {
-  TY.set = TY_SETS.findIndex(S => S.paste); TY.paste = str(text); TY.pasteTitle = str(title);
-  store.set("ty-paste", TY.paste.slice(0, 4000)); store.set("ty-paste-title", TY.pasteTitle);
-  show("typing"); tyRenderSource(); tyPrepare(); tyFocus();
+  TYV.set = TY_SETS.findIndex(S => S.paste); TYV.paste = str(text); TYV.pasteTitle = str(title);
+  store.set("ty-paste", TYV.paste.slice(0, 4000)); store.set("ty-paste-title", TYV.pasteTitle);
+  show("typing"); tyRenderSource(); tyPrepare(); TYV.typer.focus();
 }
 function tyLogChanged() {
   renderTyHist();
-  if (TY_SETS[TY.set].id === "mine" && !TY.started) { tyRenderSource(); if (!TY.segs.length) tyPrepare(); }
+  if (TY_SETS[TYV.set].id === "mine" && !TYV.typer.running) { tyRenderSource(); if (!TYV.typer.segs.length) tyPrepare(); }
 }
 function renderTyHist() {
   const box = $("#ty-hist"); if (!box) return;
@@ -3766,6 +3795,35 @@ function renderTyHist() {
       h("span", { class: "log-when" }, whenText(a.ts)),
       h("span", null, str(a.title) + (a.partial ? "（途中まで）" : "")),
       h("span", { class: "log-res" }, a.wpm + " WPM · " + (a.acc != null ? a.acc : "–") + "%")))));
+}
+
+/* ---- copy-typing under every Email / Discussion review ---- */
+function wrTypingBlock(kind) {
+  const W = WR[kind], p = W.list[W.idx];
+  if (W.typer) W.typer.stop();
+  const typer = makeTyper({ onSaved: () => { if (currentView === "typing") renderTyHist(); } });
+  W.typer = typer; W.tyRewrite = "";
+  const label = kind === "email" ? "Email" : "Discussion";
+  const bM = h("button", { type: "button", "aria-pressed": "true" }, "模範解答");
+  const bR = h("button", { type: "button", "aria-pressed": "false" }, "AI添削の書き直し例");
+  const segBox = h("div", { class: "seg", role: "group", "aria-label": "写す文章", hidden: true }, bM, bR);
+  const pick = which => {
+    const rw = which === "rewrite" && W.tyRewrite;
+    bM.setAttribute("aria-pressed", String(!rw)); bR.setAttribute("aria-pressed", String(!!rw));
+    typer.load([tyNorm(rw ? W.tyRewrite : unmark(p.model))], (rw ? "書き直し例：" : "模範解答：") + p.title, (rw ? "rw-" + kind : "md-" + (kind === "email" ? "email" : "disc")) + ":" + p.id);
+  };
+  bM.addEventListener("click", () => pick("model"));
+  bR.addEventListener("click", () => pick("rewrite"));
+  W.tyUseRewrite = (rw, go) => {
+    W.tyRewrite = str(rw); segBox.hidden = !W.tyRewrite;
+    if (go) { pick("rewrite"); const b = document.getElementById(kind + "-typing"); if (b) b.scrollIntoView({ behavior: smooth(), block: "start" }); typer.focus(); }
+  };
+  pick("model");
+  return h("div", { class: "block ty-review", id: kind + "-typing" },
+    h("h4", null, "本文を写し打ちする（タイピング練習）"),
+    h("p", { class: "sub" }, "模範解答の本文をそのまま打ちます。型の表現が指に入り、本番で打つのも速くなります。WPMと正確さは「記録」とTypingタブに残ります（" + label + "の見直しのたびに1回がおすすめ）。"),
+    segBox,
+    typer.el);
 }
 
 /* ================= Profile / ruler / home ================= */
