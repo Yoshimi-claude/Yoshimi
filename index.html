@@ -3513,10 +3513,22 @@ const TY_SETS = [
   ] },
   { id: "md-email", ja: "模範解答：Email", list: () => EMAILS.map(p => ({ id: p.id, title: p.title, text: unmark(p.model) })) },
   { id: "md-disc", ja: "模範解答：Discussion", list: () => DISCUSSIONS.map(p => ({ id: p.id, title: p.title, text: unmark(p.model) })) },
-  { id: "mine", ja: "AI添削の書き直し例",
-    empty: "まだ書き直し例がありません。Email か Discussion でAI添削を受けると、ここに並びます。チャットでもらった書き直し例は「貼り付けた英文」で練習できます。",
-    list: () => allAttempts().filter(a => (a.kind === "email" || a.kind === "discussion") && a.ai && str(a.ai.rewrite).trim()).slice(0, 20)
-      .map(a => ({ id: a.id, title: whenText(a.ts) + " " + str(a.title), text: str(a.ai.rewrite) })) },
+  { id: "mine", ja: "書き直し例",
+    empty: "まだ書き直し例がありません。Email・Discussion の見直し画面で、Claudeにもらった書き直し例を貼り付けるか、AI添削を受けると、ここに並びます。",
+    list: () => {
+      const out = [], seen = new Set();
+      const saved = store.get("rewrites", {}) || {};
+      Object.keys(saved).map(k => saved[k]).filter(x => x && str(x.text).trim()).sort((a, b) => (b.ts || 0) - (a.ts || 0)).forEach(x => {
+        seen.add(tyNorm(x.text));
+        out.push({ id: "rw-" + x.kind + "-" + x.id, title: str(x.title) + "（" + whenText(x.ts) + (x.via === "paste" ? "・貼り付け" : "・AI") + "）", text: str(x.text) });
+      });
+      allAttempts().filter(a => (a.kind === "email" || a.kind === "discussion") && a.ai && str(a.ai.rewrite).trim()).slice(0, 20).forEach(a => {
+        if (seen.has(tyNorm(a.ai.rewrite))) return;
+        seen.add(tyNorm(a.ai.rewrite));
+        out.push({ id: a.id, title: str(a.title) + "（" + whenText(a.ts) + "・AI）", text: str(a.ai.rewrite) });
+      });
+      return out.slice(0, 30);
+    } },
   { id: "paste", ja: "貼り付けた英文", paste: true }
 ];
 const TY_DRILL_N = 8;
@@ -3798,31 +3810,57 @@ function renderTyHist() {
 }
 
 /* ---- copy-typing under every Email / Discussion review ---- */
+/* sources: the model answer, or a rewrite of your own answer (pasted from the chat with Claude, or returned by AI grading).
+   The rewrite is kept per problem in this browser ("rewrites"), so it is there again next time and in the Typing tab. */
 function wrTypingBlock(kind) {
-  const W = WR[kind], p = W.list[W.idx];
+  const W = WR[kind], p = W.list[W.idx], key = kind + ":" + p.id;
   if (W.typer) W.typer.stop();
   const typer = makeTyper({ onSaved: () => { if (currentView === "typing") renderTyHist(); } });
-  W.typer = typer; W.tyRewrite = "";
-  const label = kind === "email" ? "Email" : "Discussion";
-  const bM = h("button", { type: "button", "aria-pressed": "true" }, "模範解答");
-  const bR = h("button", { type: "button", "aria-pressed": "false" }, "AI添削の書き直し例");
-  const segBox = h("div", { class: "seg", role: "group", "aria-label": "写す文章", hidden: true }, bM, bR);
-  const pick = which => {
-    const rw = which === "rewrite" && W.tyRewrite;
-    bM.setAttribute("aria-pressed", String(!rw)); bR.setAttribute("aria-pressed", String(!!rw));
+  W.typer = typer;
+  const savedRw = () => { const all = store.get("rewrites", {}) || {}; return all[key] || null; };
+  const saveRw = (text, via) => { const all = store.get("rewrites", {}) || {}; all[key] = { kind, id: p.id, title: p.title, text, via, ts: Date.now() }; store.set("rewrites", all); };
+  W.tyRewrite = savedRw() ? str(savedRw().text) : "";
+  let mode = "model";
+  const bM = h("button", { type: "button" }, "模範解答");
+  const bR = h("button", { type: "button" }, "書き直し例（あなたの答案を直したもの）");
+  const pasteTa = h("textarea", { rows: 6, spellcheck: "false", "aria-label": "書き直し例を貼り付け", placeholder: "I agree with Maya that ..." });
+  const pasteMsg = h("span", { class: "ai-err" });
+  const pasteBox = h("div", { class: "block", hidden: true },
+    h("p", { class: "note" }, "「添削依頼文をコピー」でClaudeに添削してもらったら、最後の「書き直し例」の英文だけをここに貼り付けて「この英文で写し打ち」を押します。貼り付けた英文はこの問題に保存されるので、次に見直すときや Typing タブの「書き直し例」からも練習できます。"),
+    pasteTa,
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "btn primary", onclick: () => {
+        if (!tyNorm(pasteTa.value)) { pasteMsg.textContent = "英文が入っていません。"; pasteTa.focus(); return; }
+        pasteMsg.textContent = "";
+        W.tyRewrite = pasteTa.value.trim(); saveRw(W.tyRewrite, "paste"); pick("rewrite"); typer.focus();
+      } }, "この英文で写し打ち"),
+      pasteMsg));
+  const changeBtn = h("button", { type: "button", class: "btn small ghost", hidden: true, onclick: () => { typer.stop(); pasteTa.value = W.tyRewrite; pasteBox.hidden = false; typer.el.hidden = true; changeBtn.hidden = true; pasteTa.focus(); } }, "別の書き直し例を貼り付ける");
+  function pick(which) {
+    mode = which;
+    bM.setAttribute("aria-pressed", String(which === "model")); bR.setAttribute("aria-pressed", String(which === "rewrite"));
+    if (which === "rewrite" && !W.tyRewrite) {
+      typer.stop(); typer.el.hidden = true; changeBtn.hidden = true; pasteBox.hidden = false; pasteTa.value = ""; pasteTa.focus();
+      return;
+    }
+    pasteBox.hidden = true; typer.el.hidden = false; changeBtn.hidden = which !== "rewrite";
+    const rw = which === "rewrite";
     typer.load([tyNorm(rw ? W.tyRewrite : unmark(p.model))], (rw ? "書き直し例：" : "模範解答：") + p.title, (rw ? "rw-" + kind : "md-" + (kind === "email" ? "email" : "disc")) + ":" + p.id);
-  };
+  }
   bM.addEventListener("click", () => pick("model"));
   bR.addEventListener("click", () => pick("rewrite"));
   W.tyUseRewrite = (rw, go) => {
-    W.tyRewrite = str(rw); segBox.hidden = !W.tyRewrite;
-    if (go) { pick("rewrite"); const b = document.getElementById(kind + "-typing"); if (b) b.scrollIntoView({ behavior: smooth(), block: "start" }); typer.focus(); }
+    if (!str(rw).trim()) return;
+    W.tyRewrite = str(rw); saveRw(W.tyRewrite, "ai");
+    if (go || mode === "rewrite") pick("rewrite");
+    if (go) { const b = document.getElementById(kind + "-typing"); if (b) b.scrollIntoView({ behavior: smooth(), block: "start" }); typer.focus(); }
   };
   pick("model");
   return h("div", { class: "block ty-review", id: kind + "-typing" },
     h("h4", null, "本文を写し打ちする（タイピング練習）"),
-    h("p", { class: "sub" }, "模範解答の本文をそのまま打ちます。型の表現が指に入り、本番で打つのも速くなります。WPMと正確さは「記録」とTypingタブに残ります（" + label + "の見直しのたびに1回がおすすめ）。"),
-    segBox,
+    h("p", { class: "sub" }, "模範解答か、あなたの答案を直した書き直し例を、本文ごと打ちます。型の表現が指に入り、本番で打つのも速くなります。WPMと正確さは「記録」と Typing タブに残ります。"),
+    h("div", { class: "actions" }, h("div", { class: "seg", role: "group", "aria-label": "写す文章" }, bM, bR), changeBtn),
+    pasteBox,
     typer.el);
 }
 
