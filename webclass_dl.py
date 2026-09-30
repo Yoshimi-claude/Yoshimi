@@ -789,6 +789,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="金沢大学 WebClass から講義資料（PDF）をまとめてダウンロードします。",
     )
+    parser.add_argument("--choose", action="store_true", help="科目の一覧から、番号で対象の科目を選ぶ")
     parser.add_argument("--course", help="科目名の一部を指定すると、その科目だけを対象にします（例: 感染症学）")
     parser.add_argument("--term", help="対象のクォーター（例: Q3）。all ですべての科目。省略すると今日の日付から推測します")
     parser.add_argument("--year", type=int, help="対象の年度（例: 2026）。省略すると今日の日付から推測します")
@@ -828,6 +829,31 @@ def select_courses(courses: list[Course], args) -> list[Course]:
             continue
         selected.append(c)
     return selected
+
+
+def choose_courses(courses: list[Course]) -> list[Course]:
+    """番号を入力してもらって、対象の科目を選ぶ"""
+    print(f"\n科目の一覧（{len(courses)}件）:")
+    for i, c in enumerate(courses, 1):
+        print(f"  {i:>2}. {c.name}")
+    while True:
+        try:
+            answer = input(
+                "\nダウンロードしたい科目の番号を入力してください（例: 1 3 5）。\n"
+                "何も入力せずに Enter ですべての科目、q で終了: "
+            )
+        except EOFError:
+            return []
+        answer = unicodedata.normalize("NFKC", answer).strip().lower()
+        if answer == "q":
+            return []
+        if not answer:
+            return courses
+        nums = re.findall(r"\d+", answer)
+        picked = [int(n) for n in nums if 1 <= int(n) <= len(courses)]
+        if nums and len(picked) == len(nums):
+            return [courses[n - 1] for n in dict.fromkeys(picked)]
+        print(f"1 から {len(courses)} までの番号を、スペースで区切って入力してください。")
 
 
 def main() -> int:
@@ -877,6 +903,11 @@ def main() -> int:
             if not courses:
                 print("対象の科目が見つかりませんでした。--course や --term の指定を確認してください。")
                 return 0
+            if args.choose:
+                courses = choose_courses(courses)
+                if not courses:
+                    print("科目が選ばれなかったので終了します。")
+                    return 0
             print(f"\n対象の科目（{len(courses)}件）:")
             for c in courses:
                 print(f"  ・{c.name}")
