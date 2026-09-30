@@ -505,8 +505,11 @@ class WebClassDownloader:
         self.open_course(material.course)  # 先にそのコースを開いておく必要がある
         self.goto(self.page, material.do_contents_url)
 
-        if "show_info.php" in self.page.url:
-            start = self.page.locator(
+        # show_info.php（「開始」ボタンの画面）は、画面全体のこともあれば、
+        # show_frame.php の枠（フレーム）の中にあることもある
+        info_frame = self.find_info_frame(self.page)
+        if info_frame is not None:
+            start = info_frame.locator(
                 "input[type=submit][value*='開始'], input[type=button][value*='開始'], "
                 "button:has-text('開始'), a:has-text('開始')"
             ).first
@@ -517,6 +520,12 @@ class WebClassDownloader:
             self.allow_dialog = True
             try:
                 start.click()
+                # 「開始」の画面から資料の画面に切り替わるのを待つ（最大 30 秒）
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    time.sleep(1)
+                    if len(self.context.pages) > len(before) or self.find_info_frame(self.page) is None:
+                        break
                 try:
                     self.page.wait_for_load_state("load", timeout=30000)
                 except PlaywrightTimeoutError:
@@ -532,6 +541,16 @@ class WebClassDownloader:
                 return viewer
             self.check_session(self.page)
         return self.page
+
+    def find_info_frame(self, page):
+        """「開始」ボタンのある show_info.php の画面（または枠）を探す"""
+        try:
+            for frame in page.frames:
+                if "show_info.php" in frame.url:
+                    return frame
+        except PlaywrightError:
+            pass
+        return None
 
     def scan_viewer(self, page, wait_seconds: float = 15.0) -> dict:
         """ビューアの中から、添付資料のリンク・埋め込み PDF・目次のリンクを探す"""
@@ -717,6 +736,8 @@ class WebClassDownloader:
 
             while True:
                 result = self.scan_viewer(viewer)
+                # 枠（フレーム）の中で開いているページも「見た」ことにする
+                visited.update(f.url.split("#")[0] for f in viewer.frames)
                 if self.args.debug:
                     self.dump_debug(viewer, f"{material.contents_id}_p{page_no}")
                 for url in result["files"]:
