@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -290,6 +291,7 @@ class WebClassDownloader:
         self.save_dir = save_dir
         self.allow_dialog = False
         self.fetch_page = None
+        self.material_digests: dict[str, Path] = {}
         self.saved_files: list[Path] = []
         self.skipped_files: list[str] = []
         self.failed: list[str] = []
@@ -615,6 +617,11 @@ class WebClassDownloader:
 
     def save_file(self, material: Material, filename: str, body: bytes) -> Path | None:
         """保存する。同じ名前で中身が同じファイルがあれば保存しない"""
+        # 同じ資料の中で、中身がまったく同じファイルは 1 回だけ保存する
+        digest = hashlib.sha256(body).hexdigest()
+        if digest in self.material_digests:
+            print(f"    = 同じ内容のファイルなので省略しました（{sanitize_filename(filename)}）")
+            return self.material_digests[digest]
         folder = self.save_dir / material.course.folder_name
         folder.mkdir(parents=True, exist_ok=True)
         name = sanitize_filename(filename)
@@ -626,6 +633,7 @@ class WebClassDownloader:
         while path.exists():
             if path.read_bytes() == body:
                 print(f"    = 同じファイルがすでにあります: {path.name}")
+                self.material_digests[digest] = path
                 return path
             path = folder / f"{stem} ({n}){ext}"
             n += 1
@@ -634,6 +642,7 @@ class WebClassDownloader:
         tmp.replace(path)
         print(f"    ✓ 保存しました: {material.course.folder_name}/{path.name}")
         self.saved_files.append(path)
+        self.material_digests[digest] = path
         return path
 
     def handle_body(self, material: Material, filename: str, resp) -> Path | None:
@@ -694,6 +703,7 @@ class WebClassDownloader:
     def download_material(self, material: Material) -> bool:
         viewer = self.open_material(material)
         self.fetch_page = viewer
+        self.material_digests = {}
         try:
             first_url = viewer.url
             visited = {first_url.split("#")[0]}
@@ -742,7 +752,7 @@ class WebClassDownloader:
                 self.dump_debug(viewer, f"{material.contents_id}_notfound")
                 self.write_report(viewer, f"ファイルなし: {material.course.folder_name} / {material.name}")
                 return False
-            self.history.mark_done(material, [str(p) for p in saved])
+            self.history.mark_done(material, [str(p) for p in dict.fromkeys(saved)])
             return True
         finally:
             if viewer is not self.page:
