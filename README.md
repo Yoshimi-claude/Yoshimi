@@ -114,7 +114,7 @@ cd ~/Documents/webclass-downloader
 ```bash
 cat > ~/Desktop/WebClass資料ダウンロード.command <<'EOF2'
 #!/bin/bash
-cd ~/Documents/webclass-downloader && ./run.sh --choose
+cd ~/Documents/webclass-downloader && ./run.sh --choose --goodnotes --save-dir "$HOME/Documents/勉強/3年"
 EOF2
 chmod +x ~/Desktop/WebClass資料ダウンロード.command
 ```
@@ -123,6 +123,7 @@ chmod +x ~/Desktop/WebClass資料ダウンロード.command
 
 | 書き方 | 意味 |
 | --- | --- |
+| `--goodnotes` | ダウンロードした PDF を、科目ごとに Goodnotes に読み込む（Goodnotes で科目のフォルダを開いてから「読み込む」を押す） |
 | `--choose` | 科目の一覧を表示して、番号で対象の科目を選ぶ（例：`1 3`） |
 | `--course 感染症学` | 科目名にこの文字を含む科目だけを対象にする（学期に関係なく） |
 | `--term Q4` | 対象のクォーターを指定する（推測が合わないとき） |

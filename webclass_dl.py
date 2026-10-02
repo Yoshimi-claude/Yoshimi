@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import unicodedata
@@ -789,6 +790,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="金沢大学 WebClass から講義資料（PDF）をまとめてダウンロードします。",
     )
+    parser.add_argument(
+        "--goodnotes", action="store_true", help="ダウンロードした PDF を、科目ごとに Goodnotes に読み込む（Mac のみ）"
+    )
     parser.add_argument("--choose", action="store_true", help="科目の一覧から、番号で対象の科目を選ぶ")
     parser.add_argument("--course", help="科目名の一部を指定すると、その科目だけを対象にします（例: 感染症学）")
     parser.add_argument("--term", help="対象のクォーター（例: Q3）。all ですべての科目。省略すると今日の日付から推測します")
@@ -854,6 +858,81 @@ def choose_courses(courses: list[Course]) -> list[Course]:
         if nums and len(picked) == len(nums):
             return [courses[n - 1] for n in dict.fromkeys(picked)]
         print(f"1 から {len(courses)} までの番号を、スペースで区切って入力してください。")
+
+
+GOODNOTES_APP_NAMES = ("Goodnotes", "GoodNotes", "Goodnotes 6", "GoodNotes 5")
+
+
+def ask_with_dialog(message: str, ok: str, skip: str) -> bool | None:
+    """Mac のダイアログで聞く。ok なら True、skip なら False、ダイアログが使えなければ None"""
+    script = (
+        "on run argv\n"
+        "activate\n"
+        "set r to display dialog (item 1 of argv) buttons {(item 3 of argv), (item 2 of argv)} "
+        "default button (item 2 of argv) with title \"WebClass資料ダウンロード\"\n"
+        "return button returned of r\n"
+        "end run"
+    )
+    try:
+        out = subprocess.run(
+            ["osascript", "-e", script, message, ok, skip], capture_output=True, text=True, timeout=3600
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() == ok
+
+
+def open_in_goodnotes(path: Path) -> bool:
+    for app in GOODNOTES_APP_NAMES:
+        r = subprocess.run(["open", "-a", app, str(path)], capture_output=True)
+        if r.returncode == 0:
+            return True
+    return False
+
+
+def import_to_goodnotes(files: list[Path], save_dir: Path) -> None:
+    """新しく保存した PDF を、科目ごとに Goodnotes で開いて読み込ませる。
+    Goodnotes は「今開いているフォルダ」に読み込むので、科目ごとにフォルダを開いてもらう"""
+    if sys.platform != "darwin":
+        print("Goodnotes への読み込みは Mac でだけ使えます。")
+        return
+    by_course: dict[Path, list[Path]] = {}
+    for f in files:
+        if f.suffix.lower() == ".pdf" and f.exists():
+            by_course.setdefault(f.parent, []).append(f)
+    if not by_course:
+        return
+
+    print("\nGoodnotes に読み込みます。")
+    for folder, pdfs in by_course.items():
+        place = f"{save_dir.name} → {folder.name}"
+        message = (
+            f"Goodnotes で「{place}」フォルダを開いてから、「読み込む」を押してください。\n\n"
+            f"新しい PDF が {len(pdfs)}件 あります:\n" + "\n".join(f"・{p.name}" for p in pdfs)
+        )
+        answer = ask_with_dialog(message, "読み込む", "この科目は飛ばす")
+        if answer is None:  # ダイアログが使えないときはターミナルで聞く
+            print(f"\n【{folder.name}】新しい PDF {len(pdfs)}件")
+            try:
+                typed = input(
+                    f"Goodnotes で「{place}」フォルダを開いてから Enter を押してください（s で飛ばす）: "
+                )
+            except EOFError:
+                return
+            answer = typed.strip().lower() != "s"
+        if not answer:
+            print(f"  - {folder.name} は読み込みませんでした")
+            continue
+        for pdf in pdfs:
+            if open_in_goodnotes(pdf):
+                print(f"  ✓ Goodnotes に送りました: {folder.name}/{pdf.name}")
+            else:
+                print("  ! Goodnotes を開けませんでした。Goodnotes が入っているか確認してください。")
+                return
+            time.sleep(2)  # 1 件ずつ、読み込みが終わるのを少し待つ
+    print("\nGoodnotes への読み込みが終わりました。それぞれのフォルダに入っているか確認してください。")
 
 
 def main() -> int:
@@ -999,6 +1078,10 @@ def main() -> int:
         print("直すための手がかりになるので、次のコマンドで開いて中身を見せてください:")
         print(f"  open {report}")
     print("=" * 60)
+
+    # 7. Goodnotes に読み込む
+    if args.goodnotes and dl.saved_files:
+        import_to_goodnotes(dl.saved_files, save_dir)
     return 0
 
 
